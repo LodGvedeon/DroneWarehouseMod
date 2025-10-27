@@ -1,0 +1,16 @@
+{
+  "Name": "Drone Warehouse Mod",
+  "Author": "Jenya",
+  "Version": "1.0.0",
+  "Description": "Adds a drone warehouse with automated drones for harvesting.",
+  "UniqueID": "Jenya.DroneWarehouseMod",
+  "EntryDll": "DroneWarehouseMod.dll",
+  "MinimumApiVersion": "4.0.0",
+  "Dependencies": [
+    {
+      "UniqueID": "Pathoschild.ContentPatcher",
+      "IsRequired": true
+    }
+  ],
+  "UpdateKeys": []
+}

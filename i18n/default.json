@@ -1,0 +1,33 @@
+{
+  "ui.console.title": "Drone Warehouse Console",
+  "ui.level": "Level: {{level}}",
+  "tooltip.requiresLevel": "Requires level {{level}}",
+  "ui.upgrade": "UPGRADE",
+  "ui.createFarmer": "CREATE FARMER DRONE",
+  "ui.beacon.label": "Beacon: {{size}}x{{size}}",
+  "ui.beacon.create": "SELECT",
+  "ui.currentDrones": "Current drones",
+  "ui.scrap.header": "Scrap a drone",
+  "ui.create.header": "DRONE CREATION:",
+  "ui.create.harvest": "Harvester",
+  "ui.create.water": "Waterer",
+  "ui.create.pet": "Petter",
+
+  "tooltip.harvest": "Harvester — a drone that collects ripe crops and forage on the farm.\nEverything it collects is stored in the warehouse chest.",
+  "tooltip.water": "Waterer — a drone that waters hoed tiles.\nEvery 10 in-game minutes it checks for dry tiles.",
+  "tooltip.pet": "Petter — a drone that pets your farm animals and pets.\nOnly when they are outdoors.",
+  "tooltip.farmer": "A powerful drone that tills and plants tirelessly.\nPress F6 or the console button to open the planting controller.\nIt can clear grass and small debris that block planting.",
+
+  "hud.selection.instructions": "Selection mode: LMB — add area; RMB — undo last; Enter — START; Esc — exit.",
+  "hud.plant.instructions": "Planting mode: LMB — add; RMB — undo; Q — 3×3/5×5/7×7; Enter — START; Esc — exit.",
+  "hud.noWarehouse": "There's no “Drone Warehouse” building on the farm.",
+  "hud.noFarmer": "The selected warehouse has no farmer drone. Create one via the console.",
+
+  "menu.chest.title": "Drone Warehouse — Chest",
+
+  "farmer.reason.noBeacons": "No beacons or selected areas.",
+  "farmer.reason.noTiles": "No suitable tiles.",
+  "farmer.reason.noSeeds": "No suitable seeds for the current season in the warehouse chest.",
+  "farmer.reason.noFarmer": "Farmer drone has not been created.",
+  "farmer.reason.addedToQueue": "Added to queue: {{count}} tiles."
+}

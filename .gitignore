@@ -1,0 +1,16 @@
+# C#
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+
+# Build artifacts
+*.pdb
+*.nupkg

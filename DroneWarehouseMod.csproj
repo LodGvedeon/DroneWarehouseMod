@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        
+        <!-- Путь к Mods (опционально через переменную окружения) -->
+        <StardewModsDir Condition="'$(STARDEW_MODS_DIR)' != ''">$(STARDEW_MODS_DIR)</StardewModsDir>
+        <StardewModsDir Condition="'$(StardewModsDir)' == ''">C:\My files\games\Steam\steamapps\common\Stardew Valley\Mods</StardewModsDir>
+    </PropertyGroup>
+    
+    <ItemGroup>
+        <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
+    </ItemGroup>
+    
+    <ItemGroup>
+        <None Include="manifest.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        
+        <None Include="i18n\*.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        
+        <None Include="assets\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        
+        <!-- Не копировать старый Content Patcher-файл, если попался рядом -->
+        <None Update="content.json">
+            <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </None>
+    </ItemGroup>
+</Project>

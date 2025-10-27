@@ -1,0 +1,27 @@
+{
+  "Name": "Склад дронов",
+  "Description": "Постройка для хранения и управления дронами, которые помогают на ферме.",
+  "Builder": "Robin",
+  "BuildCost": 15000,
+  "BuildMaterials": [
+    { "ItemId": "334", "Amount": 5 }, 
+    { "ItemId": "335", "Amount": 5 },
+    { "ItemId": "388", "Amount": 250 }
+  ],
+  "BuildDays": 2,
+
+  "Size": { "X": 2, "Y": 2 },
+  "CollisionMap": "XX\nXX",
+
+  "Texture": "Mods/Jenya.DroneWarehouseMod/DroneWarehouseTexture",
+  "SourceRect": { "X": 0, "Y": 0, "Width": 64, "Height": 64 },
+  "SeasonOffset": { "X": 64, "Y": 0 },
+
+  "BuildMenuDrawOffset": { "X": -8, "Y": -8 },
+  "DrawOffset": { "X": -16, "Y": 10 },
+
+  "FadeWhenBehind": true,
+  "SortTileOffset": 0.0,
+  "DrawShadow": false,
+  "BuildCondition": "BUILDINGS_CONSTRUCTED All DroneWarehouse 0 0 true"
+}
