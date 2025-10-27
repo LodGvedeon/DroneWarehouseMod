@@ -26,7 +26,7 @@
   "menu.chest.title": "Drone Warehouse — Chest",
 
   "building.name": "Drone Warehouse",
-  "building.description": "Drone Warehouse",
+  "building.description": "A building where you can create various drones.\nThey can do some farm work for you.",
 
   "farmer.reason.noBeacons": "No beacons or selected areas.",
   "farmer.reason.noTiles": "No suitable tiles.",

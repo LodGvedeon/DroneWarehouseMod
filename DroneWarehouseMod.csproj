@@ -3,6 +3,7 @@
         <TargetFramework>net6.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <NoWarn>$(NoWarn);CS9057</NoWarn>
         
         <!-- Путь к Mods (опционально через переменную окружения) -->
         <StardewModsDir Condition="'$(STARDEW_MODS_DIR)' != ''">$(STARDEW_MODS_DIR)</StardewModsDir>

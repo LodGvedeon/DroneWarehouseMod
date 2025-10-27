@@ -67,7 +67,7 @@ namespace DroneWarehouseMod.Game.Drones
                 case WorkKind.WaterSoil:
                 {
                     var v = new Vector2(tile.X, tile.Y);
-                    if (farm.terrainFeatures.TryGetValue(v, out var tf) && tf is HoeDirt hd)
+                    if (farm.terrainFeatures?.TryGetValue(v, out var tf) == true && tf is HoeDirt hd)
                     {
                         bool alreadyWatered = false;
                         try { alreadyWatered = (hd.state?.Value == HoeDirt.watered); } catch { alreadyWatered = false; }

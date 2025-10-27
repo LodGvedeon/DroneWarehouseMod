@@ -15,7 +15,7 @@ namespace DroneWarehouseMod.Core
         private static bool  _customEnabled;
         private static float _customVolume = 1f;
 
-        private static SoundEffect? _lidOpen, _lidClose, _harvest;
+        private static SoundEffect? _lidOpen, _lidClose, _harvest = null!;
 
         // Инициализация и загрузка кастомных эффектов (если включены)
         public static void Init(IModHelper helper, IMonitor monitor, DroneWarehouseMod.ModConfig cfg)

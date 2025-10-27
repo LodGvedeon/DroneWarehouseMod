@@ -1503,7 +1503,10 @@ namespace DroneWarehouseMod.Game
             Chest chest = GetChestFor(d.Home);
             for (int i = 0; i < cargo.Count; i++)
             {
-                Item? leftover = chest.addItem(cargo[i]);
+                var item = cargo[i];
+                if (item is null) continue; // защита от null в списке
+
+                Item? leftover = chest.addItem(item);
                 if (leftover is SObject lo && lo.Stack > 0)
                     cargo[i] = lo;
                 else

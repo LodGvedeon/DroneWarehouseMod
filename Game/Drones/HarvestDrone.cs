@@ -44,7 +44,7 @@ namespace DroneWarehouseMod.Game.Drones
 
                 try
                 {
-                    Item harvestItem = ItemRegistry.Create(hd.crop.indexOfHarvest.Value);
+                    Item harvestItem = ItemRegistry.Create(hd.crop!.indexOfHarvest.Value);
                     if (harvestItem is SObject so && so.Category == SObject.flowersCategory)
                         continue;
                 }
