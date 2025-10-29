@@ -1,0 +1,36 @@
+{
+  "ui.console.title": "Consola de almacén de drones",
+  "ui.level": "Nivel: {{level}}",
+  "tooltip.requiresLevel": "Requiere nivel {{level}}",
+  "ui.upgrade": "MEJORA",
+  "ui.createFarmer": "CREAR UN DRON GRANJERO",
+  "ui.beacon.label": "Faro: {{size}}x{{size}}",
+  "ui.beacon.create": "SELECCIONAR",
+  "ui.currentDrones": "Drones actuales",
+  "ui.scrap.header": "Desguace de dron",
+  "ui.create.header": "CREACIÓN DE DRONES:",
+  "ui.create.harvest": "Cosechador",
+  "ui.create.water": "Regador",
+  "ui.create.pet": "Acariciador",
+
+  "tooltip.harvest": "Cosechador: un dron que recolecta cultivos maduros y forraje en la granja. Todo lo que recolecta se almacena en el cofre del almacén.",
+  "tooltip.water": "Regador: un dron que riega las casillas excavadas.\nCada 10 minutos de juego, verifica si hay casillas secas.",
+  "tooltip.pet": "Acariciador: un dron que acaricia a tus animales de granja y mascotas.\nSolo cuando están al aire libre.",
+  "tooltip.farmer": "Un potente dron que cultiva y planta incansablemente.\nPresione F6 o el botón de la consola para abrir el controlador de plantación.\nPuede limpiar el césped y los pequeños residuos que bloquean la siembra.",
+
+  "hud.selection.instructions": "Modo de selección: CIZ — añadir área; CDE — deshacer el último; Enter — Iniciar; Esc — Salir.",
+  "hud.plant.instructions": "Modo de plantación: CIZ — agregar; CDE — deshacer; Q — 3×3/5×5/7×7; Enter — Iniciar; Esc — Salir.",
+  "hud.noWarehouse": "No hay ningún edificio llamado “Almacén de Drones” en la granja.",
+  "hud.noFarmer": "El almacén seleccionado no tiene dron agrícola. Crea uno desde la consola.",
+
+  "menu.chest.title": "Almacén de drones — Pecho",
+
+  "building.name": "Almacén de drones",
+  "building.description": "Un edificio donde puedes crear varios drones. Pueden realizar algunos trabajos agrícolas para ti.",
+  
+  "farmer.reason.noBeacons": "Sin balizas ni zonas seleccionadas.",
+  "farmer.reason.noTiles": "No hay fichas adecuadas.",
+  "farmer.reason.noSeeds": "No hay semillas adecuadas para la temporada actual en el cofre del almacén.",
+  "farmer.reason.noFarmer": "Drone agricultor no ha sido creado.",
+  "farmer.reason.addedToQueue": "Añadido a la cola: {{count}} Azulejos."
+}
