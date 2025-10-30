@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using StardewValley;
 using StardewValley.GameData.Crops;
 

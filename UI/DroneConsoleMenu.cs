@@ -1,7 +1,4 @@
 // UI/DroneConsoleMenu.cs
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
@@ -9,7 +6,6 @@ using StardewValley;
 using StardewValley.Menus;
 using StardewValley.Buildings;
 using DroneWarehouseMod.Game.Drones;
-using DroneWarehouseMod.Core;
 using DroneWarehouseMod.Game;
 using MD = DroneWarehouseMod.Core.ModDataKeys;
 using SObject = StardewValley.Object;

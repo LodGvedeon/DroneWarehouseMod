@@ -1,12 +1,7 @@
 using Microsoft.Xna.Framework;
 using StardewValley.Buildings;
-using DroneWarehouseMod.Game;            // DroneManager
-using DroneWarehouseMod.Game.Drones;
 using DroneWarehouseMod.Core;
-using System.Collections.Generic;
-using StardewValley.Objects;
 using StardewValley;
-using SObject = StardewValley.Object;
 using Netcode;
 using StardewValley.Characters;
 

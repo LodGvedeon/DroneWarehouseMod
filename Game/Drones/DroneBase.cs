@@ -1,9 +1,7 @@
-using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
 using StardewValley.Buildings;
-using DroneWarehouseMod.Game;
 
 namespace DroneWarehouseMod.Game.Drones
 {

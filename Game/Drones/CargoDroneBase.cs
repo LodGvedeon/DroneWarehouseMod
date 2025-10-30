@@ -1,8 +1,5 @@
-using System.Linq;
-using System.Collections.Generic;
 using StardewValley;
 using StardewValley.Buildings;
-using DroneWarehouseMod.Game;
 
 namespace DroneWarehouseMod.Game.Drones
 {
