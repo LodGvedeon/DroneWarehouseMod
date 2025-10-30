@@ -22,11 +22,21 @@ namespace DroneWarehouseMod.Game.Drones
         private Bush? _targetBush;
         private readonly float _speed;
         public override float SpeedPxPerTick => _speed;
+        private readonly ModConfig _managerConfig;
 
-        public HarvestDrone(Building home, DroneAnimSet anim, int capacity, float speed)
+        private struct ExtraDropInfo
+            {
+                public string Qid;
+                public int Min;
+                public int Max;
+                public double Chance;
+            }
+
+        public HarvestDrone(Building home, DroneAnimSet anim, int capacity, float speed, ModConfig managerConfig = null)
             : base(home, anim, capacity)
         {
             _speed = Math.Max(0.1f, speed);
+            _managerConfig = managerConfig ?? new ModConfig();
         }
 
         protected override bool TryAcquireWork(Farm farm, DroneManager mgr, out Point tile, out WorkKind kind)
@@ -44,9 +54,19 @@ namespace DroneWarehouseMod.Game.Drones
 
                 try
                 {
-                    Item harvestItem = ItemRegistry.Create(hd.crop!.indexOfHarvest.Value);
-                    if (harvestItem is SObject so && so.Category == SObject.flowersCategory)
-                        continue;
+                    bool isForageCrop = hd.crop.forageCrop?.Value ?? false;
+
+                    // менеджер отдаёт значение из конфига
+                    if (mgr.SkipFlowerCrops && !isForageCrop)
+                    {
+                        try
+                        {
+                            string qid = DroneWarehouseMod.Core.Qid.Qualify(hd.crop.indexOfHarvest.Value?.ToString() ?? "");
+                            if (ItemRegistry.Create(qid, 1) is SObject so && so.Category == SObject.flowersCategory)
+                                continue;
+                        }
+                        catch { /* молча */ }
+                    }
                 }
                 catch { }
 
@@ -79,7 +99,13 @@ namespace DroneWarehouseMod.Game.Drones
 
             foreach (var bush in BushStream())
             {
-                if (!BushHasBerries(bush, farm)) continue;   // есть ли ягоды на этом кусте
+                if (!BushHasBerries(bush, farm))
+                    continue;
+
+                // Ключевая строка: берём в работу только кусты с ВАНИЛЬНЫМ дропом
+                string dropQid = GetBushDropQid(farm, bush);
+                if (string.IsNullOrEmpty(dropQid))
+                    continue; // модовый куст => не кандидат, дрон не полетит
 
                 Point p = BushTile(bush);
                 if (mgr.IsTileReserved(p)) continue;
@@ -88,8 +114,8 @@ namespace DroneWarehouseMod.Game.Drones
                 if (dist < bestDist)
                 {
                     bestDist = dist; best = p;
-                    bestKind = WorkKind.PickupForage;         // используем ту же анимацию «сбор»
-                    _targetBush = bush;                       // запомним цель-куст
+                    bestKind = WorkKind.PickupForage;   // «сбор»
+                    _targetBush = bush;                 // запоминаем цель
                 }
             }
 
@@ -104,37 +130,95 @@ namespace DroneWarehouseMod.Game.Drones
             return false;
         }
 
+        private static bool TryGetExtraDropFromData(CropData data, out ExtraDropInfo info)
+        {
+            info = default;
+            if (data == null) return false;
+
+            try
+            {
+                var t = data.GetType();
+
+                // Вариант A: одиночные поля (если конкретный мод/сборка их добавляет)
+                var pId     = t.GetProperty("ExtraHarvestItemId");
+                var pMin    = t.GetProperty("ExtraHarvestMinStack");
+                var pMax    = t.GetProperty("ExtraHarvestMaxStack");
+                var pChance = t.GetProperty("ExtraHarvestItemChance") ?? t.GetProperty("ExtraHarvestChance");
+
+                if (pId != null)
+                {
+                    string id = pId.GetValue(data) as string ?? string.Empty;
+                    if (!string.IsNullOrEmpty(id))
+                    {
+                        info.Qid = Qid.Qualify(id);
+                        info.Min = Math.Max(1, (int?)pMin?.GetValue(data) ?? 1);
+                        info.Max = Math.Max(info.Min, (int?)pMax?.GetValue(data) ?? info.Min);
+
+                        object chObj = pChance?.GetValue(data);
+                        double ch = chObj is float f ? f
+                                : chObj is double d ? d
+                                : chObj is int i ? i
+                                : 0.0;
+                        info.Chance = Math.Clamp(ch, 0.0, 1.0);
+                        return true;
+                    }
+                }
+
+                // Вариант B: список записей (часто формат наподобие GenericSpawnItemData)
+                var pList = t.GetProperty("ExtraHarvestItems")
+                        ?? t.GetProperty("AdditionalHarvestItems")
+                        ?? t.GetProperty("ExtraItems");
+                var listObj = pList?.GetValue(data) as System.Collections.IEnumerable;
+
+                if (listObj != null)
+                {
+                    foreach (var entry in listObj)
+                    {
+                        var te = entry.GetType();
+                        string id = te.GetProperty("ItemId")?.GetValue(entry) as string ?? "";
+                        if (string.IsNullOrEmpty(id)) continue;
+
+                        info.Qid = Qid.Qualify(id);
+                        info.Min = Math.Max(1, (int?)te.GetProperty("MinStack")?.GetValue(entry) ?? 1);
+                        info.Max = Math.Max(info.Min, (int?)te.GetProperty("MaxStack")?.GetValue(entry) ?? info.Min);
+
+                        object ch = te.GetProperty("Chance")?.GetValue(entry);
+                        double chD = ch is float f ? f
+                                    : ch is double d ? d
+                                    : ch is int i ? i
+                                    : 1.0; // по умолчанию 100%
+                        info.Chance = Math.Clamp(chD, 0.0, 1.0);
+                        return true; // берём первую подходящую запись
+                    }
+                }
+            }
+            catch { /* молча */ }
+
+            return false;
+        }
+
 
         // --- есть ли ягоды на кусте прямо сейчас ---
         private static bool BushHasBerries(Bush b, GameLocation loc)
         {
             try
             {
-                // уже собран сегодня нами/игроком?
-                if (b?.modData != null
+                if (b is null) return false;
+
+                if (b.modData != null
                     && b.modData.TryGetValue(MD.BushPickedDay, out var s)
                     && int.TryParse(s, out var day)
                     && day == Game1.Date.TotalDays)
                     return false;
 
-                // чайный куст: последняя неделя сезона; в теплице — тоже; зимой на улице — нет
-                if (b.size.Value == Bush.greenTeaBush)
-                {
-                    bool lastWeek = Game1.dayOfMonth is >= 22 and <= 28;
-                    if (!lastWeek) return false;
-                    var season = Game1.GetSeasonForLocation(loc);
-                    return season != Season.Winter || (loc?.IsGreenhouse == true);
-                }
-
-                // сезонные ягоды + на спрайте видны ягоды
-                bool window =
-                    (Game1.GetSeasonForLocation(loc) == Season.Spring && Game1.dayOfMonth is >= 15 and <= 18) ||
-                    (Game1.GetSeasonForLocation(loc) == Season.Fall   && Game1.dayOfMonth is >= 8  and <= 11);
-
-                return window && (b.tileSheetOffset?.Value ?? 0) > 0;
+                int offs = b.tileSheetOffset?.Value ?? 0;
+                return offs > 0;
             }
             catch { return false; }
         }
+
+        private static bool IsStrictVanillaTeaOrBerryBush(Bush b, GameLocation loc)
+            => !string.IsNullOrEmpty(GetBushDropQid(loc, b));
 
         private static Point BushTile(Bush b)
         {
@@ -147,14 +231,38 @@ namespace DroneWarehouseMod.Game.Drones
         {
             try
             {
-                if (bush.size.Value == Bush.greenTeaBush) return "(O)815";   // Tea Leaves
+                if (bush is null) return string.Empty;
+
+                // Строго только базовый vanilla-тип (не наследники модов)
+                if (bush.GetType() != typeof(Bush))
+                    return string.Empty;
+
+                // Любой чужой ключ в modData => считаем модовым кустом и игнорируем
+                var md = bush.modData;
+                if (md != null)
+                {
+                    foreach (var kv in md.Pairs)
+                    {
+                        if (kv.Key == MD.BushPickedDay) continue; // наш служебный ключ
+                        return string.Empty;
+                    }
+                }
+
+                // Ваниль: чай
+                if (bush.size?.Value == Bush.greenTeaBush)
+                    return "(O)815"; // Tea Leaves
+
+                // Ваниль: сезонные ягоды (в мире, не на ферме)
                 Season s = Game1.GetSeasonForLocation(loc);
                 if (s == Season.Spring && Game1.dayOfMonth is >= 15 and <= 18) return "(O)296"; // Salmonberry
-                if (s == Season.Fall   && Game1.dayOfMonth is >= 8  and <= 11) return "(O)410"; // Blackberry
+                if (s == Season.Fall   && Game1.dayOfMonth is >=  8 and <= 11) return "(O)410"; // Blackberry
             }
-            catch { }
+            catch { /* молча */ }
+
+            // Всё остальное — модовое/неподходящее: игнор
             return string.Empty;
         }
+
         private void TryAddBonusHay(string harvestId)
         {
             string id = Qid.Qualify(harvestId);
@@ -222,6 +330,10 @@ namespace DroneWarehouseMod.Game.Drones
         // === DroneWarehouseMod.Game.Drones.HarvestDrone ===
         protected override void DoWorkAt(Farm farm, DroneManager mgr, Point p, WorkKind kind)
         {
+            // Если груз полон — ничего не трогаем (не «съедаем» ресурс)
+            if (CargoFull())
+                return;
+
             Vector2 v = new(p.X, p.Y);
 
             // --- A) Дары природы на земле ---
@@ -241,28 +353,30 @@ namespace DroneWarehouseMod.Game.Drones
                     Game1.player.gainExperience(Farmer.foragingSkill, 7);
                     farm.objects.Remove(v);
 
-                    // ВАЖНО: звук только на ферме (через общий сервис Audio)
+                    // звук только если игрок на ферме
                     Audio.PlayFarmOnly(farm, "harvest");
                 }
                 return;
             }
 
-            // --- B) сбор с куста ---
+            // --- B) Сбор с ягодного/чайного куста ---
             if (kind == WorkKind.PickupForage && _targetBush != null)
             {
                 var bush = _targetBush;
                 _targetBush = null;
 
-                // Куст уже без ягод — выходим
+                // Новое: если внезапно оказался не-ванильный — выходим
+                if (!IsStrictVanillaTeaOrBerryBush(bush, farm))
+                    return;
+
                 if (!BushHasBerries(bush, farm))
                     return;
 
-                // Что падает с куста (чай / морошка / ежевика)
                 string dropQid = GetBushDropQid(farm, bush);
                 if (string.IsNullOrEmpty(dropQid))
                     return;
 
-                // Сколько ягод дать (приближение ванили), БЕЗ спавна debris
+                // Сколько дать (ванильная логика), без спавна debris
                 int qty = ComputeBushHarvestCount(Game1.player, bush, farm);
                 if (qty <= 0) qty = 1;
 
@@ -271,23 +385,25 @@ namespace DroneWarehouseMod.Game.Drones
                 {
                     if (ItemRegistry.Create(dropQid, 1) is SObject so)
                     {
+                        // Ботаник (Foraging 10): всегда иридиевая
                         if (Game1.player.professions.Contains(Farmer.botanist))
                             so.Quality = SObject.bestQuality;
+
                         _cargo.Add(so);
                         given++;
                     }
                 }
 
-                // === ВАЖНО: корректно «обнуляем» куст и помечаем «собран сегодня» ===
-                MarkBushPickedToday(bush);
-
+                // Помечаем куст «собран сегодня» и звуки/XP — только если реально взяли
                 if (given > 0)
                 {
-                    Audio.PlayFarmOnly(farm, "harvest");               // звук только если игрок на ферме
+                    MarkBushPickedToday(bush);
+                    Audio.PlayFarmOnly(farm, "harvest");
                     Game1.player.gainExperience(Farmer.foragingSkill, 7);
                 }
                 return;
             }
+
             // --- C) Урожай с грядки ---
             if (kind != WorkKind.HarvestCrop)
                 return;
@@ -301,80 +417,138 @@ namespace DroneWarehouseMod.Game.Drones
             {
                 string harvestQid = Qid.Qualify(crop.indexOfHarvest.Value?.ToString() ?? "");
 
-                StardewValley.GameData.Crops.CropData? data = null;
-                try
-                {
-                    var db = Game1.content.Load<Dictionary<string, StardewValley.GameData.Crops.CropData>>("Data/Crops");
-                    string target = harvestQid;
-                    data = db.Values.FirstOrDefault(cd =>
-                        !string.IsNullOrEmpty(cd.HarvestItemId)
-                        && string.Equals(ToQid(cd.HarvestItemId), target, System.StringComparison.OrdinalIgnoreCase));
-                }
-                catch { }
+                // 1.6: прямой доступ к CropData
+                CropData? data = null;
+                try { data = crop.GetData(); } catch { /* fallback */ }
 
-                int min = Math.Max(1, data?.HarvestMinStack ?? 1);
-                int max = Math.Max(min, data?.HarvestMaxStack ?? min);
+                // Базовые поля с безопасными дефолтами
+                int min = 1;
+                int max = 1;
+                int regrowDays = -1;
+                float extraChance = 0f;
+
+                if (data != null)
+                {
+                    min = Math.Max(1, data.HarvestMinStack);
+                    max = Math.Max(min, data.HarvestMaxStack);
+                    // жёстко уводим вычисление в float: MathF + явное (float)
+                    extraChance = MathF.Max(0f, (float)data.ExtraHarvestChance);
+                    regrowDays = data.RegrowDays;
+                }
+
+                // Количество основного урожая
                 int qty = Game1.random.Next(min, max + 1);
 
-                float extraChance = (float)System.Math.Max(0.0, (double)(data?.ExtraHarvestChance ?? 0f));
-                while (Game1.random.NextDouble() < extraChance)
+                // сравниваем double с double, чтобы не было даункаста
+                while (Game1.random.NextDouble() < (double)extraChance)
                     qty++;
 
                 bool isForageCrop = crop.forageCrop?.Value ?? false;
+                int quality = DroneWarehouseMod.Game.DroneManager.RollCropQuality(hd, Game1.player);
 
-                int quality = DroneManager.RollCropQuality(hd, Game1.player);
-
-                int added = 0;
+                // ---------- (1) ОСНОВНОЙ УРОЖАЙ ----------
+                int addedMain = 0;
                 for (int i = 0; i < qty && !CargoFull(); i++)
                 {
                     if (ItemRegistry.Create(harvestQid, 1) is SObject so)
                     {
                         so.Quality = quality;
                         _cargo.Add(so);
-                        added++;
+                        addedMain++;
                     }
                 }
 
+                // ---------- (2) ДОПОЛНИТЕЛЬНЫЙ ПРЕДМЕТ ИЗ CropData (если задан) ----------
+                int addedExtra = 0;
+                if (data != null && TryGetExtraDropFromData(data, out var extra))
+                {
+                    if (Game1.random.NextDouble() < extra.Chance)
+                    {
+                        int eQty = Game1.random.Next(extra.Min, extra.Max + 1);
+                        for (int i = 0; i < eQty && !CargoFull(); i++)
+                        {
+                            if (ItemRegistry.Create(extra.Qid, 1) is SObject soExtra)
+                            {
+                                // Обычно к доп-предмету качество не применяется.
+                                _cargo.Add(soExtra);
+                                addedExtra++;
+                            }
+                        }
+                    }
+                }
+
+                // Бонусное сено для пшеницы — как было.
                 TryAddBonusHay(harvestQid);
 
-                // XP
-                if (isForageCrop)
+                // ---------- (3) ФИНАЛ: XP/звук/регроу — только если ЧТО‑ТО реально взяли ----------
+                int addedTotal = addedMain + addedExtra;
+                if (addedTotal > 0)
                 {
-                    Game1.player.gainExperience(Farmer.foragingSkill, 3 * System.Math.Max(1, added));
-                }
-                else
-                {
-                    var tmp = (SObject)ItemRegistry.Create(harvestQid, 1);
-                    int oldQ = tmp.Quality;
-                    tmp.Quality = SObject.lowQuality;
-                    int basePrice = tmp.sellToStorePrice();
-                    tmp.Quality = oldQ;
+                    // XP
+                    if (isForageCrop)
+                    {
+                        Game1.player.gainExperience(Farmer.foragingSkill, 3 * addedTotal);
+                    }
+                    else
+                    {
+                        var tmp = (SObject)ItemRegistry.Create(harvestQid, 1);
+                        int oldQ = tmp.Quality;
+                        tmp.Quality = SObject.lowQuality;
+                        int basePrice = tmp.sellToStorePrice();
+                        tmp.Quality = oldQ;
 
-                    int xp = DroneWarehouseMod.Game.DroneManager
-                        .ComputeFarmingXpFromBasePrice(basePrice) * System.Math.Max(1, added);
-                    Game1.player.gainExperience(Farmer.farmingSkill, xp);
-                }
+                        int xp = DroneWarehouseMod.Game.DroneManager
+                            .ComputeFarmingXpFromBasePrice(basePrice) * addedTotal;
+                        Game1.player.gainExperience(Farmer.farmingSkill, xp);
+                    }
 
-                if (added > 0)
-                    Audio.PlayFarmOnly(farm, "harvest"); // звук только на ферме
+                    Audio.PlayFarmOnly(farm, "harvest");
 
-                int regrowDays = data?.RegrowDays ?? -1;
-                if (regrowDays >= 0)
-                {
-                    crop.fullyGrown.Value = true;
-                    crop.currentPhase.Value = System.Math.Max(0, crop.phaseDays.Count - 1);
-                    crop.dayOfCurrentPhase.Value = System.Math.Max(1, regrowDays);
+                    if (regrowDays >= 0)
+                    {
+                        crop.fullyGrown.Value = true;
+                        crop.currentPhase.Value = Math.Max(0, crop.phaseDays.Count - 1);
+                        crop.dayOfCurrentPhase.Value = Math.Max(1, regrowDays);
+                    }
+                    else
+                    {
+                        hd.crop = null;
+                    }
                 }
-                else
-                {
-                    hd.crop = null;
-                }
+                // иначе — ничего не удаляем с грядки (груз мог забиться)
             }
             catch
             {
                 // молча
             }
         }
+
+        private static Item? GetDebrisItem(object debris)
+        {
+            try
+            {
+                var t  = debris.GetType();
+                var fi = t.GetField("item", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var pi = t.GetProperty("item", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?? t.GetProperty("Item", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                object val = fi?.GetValue(debris) ?? pi?.GetValue(debris);
+                if (val is Item it) return it;
+
+                // NetRef<T> (Value)
+                if (val != null)
+                {
+                    var vt = val.GetType();
+                    var pv = vt.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    var v2 = pv?.GetValue(val);
+                    return v2 as Item;
+                }
+            }
+            catch { /* тихо */ }
+            return null;
+        }
+                
+
 
         protected override DroneAnimMode WorkAnimMode() =>
             IsLoadedVisual ? DroneAnimMode.WorkLoaded : DroneAnimMode.WorkEmpty;

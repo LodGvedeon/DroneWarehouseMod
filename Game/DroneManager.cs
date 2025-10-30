@@ -24,7 +24,7 @@ namespace DroneWarehouseMod.Game
     {
         private readonly IMonitor _mon;
         private readonly IModHelper _helper;
-        private readonly ModConfig _cfg;
+        internal readonly ModConfig _cfg;
 
         public bool WarehouseLidOpen { get; private set; }
 
@@ -69,6 +69,8 @@ namespace DroneWarehouseMod.Game
         private readonly HashSet<Point> _dryHoed = new();
         private readonly HashSet<object> _petDoneToday = new();
         private readonly HashSet<object> _bushDoneToday = new();
+
+        public bool SkipFlowerCrops => _cfg?.HarvesterSkipFlowerCrops ?? true;
 
         public bool IsPetDone(object e) => e != null && _petDoneToday.Contains(e);
         public void MarkPetDone(object e) { if (e != null) _petDoneToday.Add(e); }
@@ -810,7 +812,9 @@ namespace DroneWarehouseMod.Game
             HATCH_Y_OFFSET = _cfg.HatchYOffset;
             _scanInterval = Math.Max(1, _cfg.ScanIntervalTicks);
             NOFLY_PAD_TILES = Math.Max(0, _cfg.NoFlyPadTiles);
-            LOS_PAD_PX      = Math.Max(0, _cfg.LineOfSightPadPx);
+            LOS_PAD_PX = Math.Max(0, _cfg.LineOfSightPadPx);
+            
+            _helper.Events.GameLoop.Saving += OnSaving;
 
             static DroneAnimSet EnsureNotEmpty(DroneAnimSet set, Texture2D fb)
             {
@@ -842,9 +846,9 @@ namespace DroneWarehouseMod.Game
 
             // 1) Запуск из люков
             bool shouldScan = (_tick % _scanInterval) == 0;
-            int waterWork   = _dryHoed.Count;
+            int waterWork = _dryHoed.Count;
             int harvestWork = shouldScan ? CountHarvestTargets(farm) : 0;
-            int petWork     = shouldScan ? CountPetTargets(farm)     : 0;
+            int petWork = shouldScan ? CountPetTargets(farm) : 0;
             bool anyFarmerPending = _drones.Any(d => d is FarmerDrone fd && fd.HasPendingWork);
 
             if (waterWork > 0 || harvestWork > 0 || petWork > 0 || anyFarmerPending)
@@ -857,10 +861,10 @@ namespace DroneWarehouseMod.Game
                     bool farmerWork = _drones.Any(d => d.Home == b && d is FarmerDrone fd && fd.HasPendingWork);
 
                     DroneBase? candidate =
-                        _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is WaterDrone   && waterWork   > 0)
-                    ??  _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is HarvestDrone && harvestWork > 0)
-                    ??  _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is PetDrone     && petWork     > 0)
-                    ??  _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is FarmerDrone  && farmerWork);
+                        _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is WaterDrone && waterWork > 0)
+                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is HarvestDrone && harvestWork > 0)
+                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is PetDrone && petWork > 0)
+                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is FarmerDrone && farmerWork);
 
                     if (candidate == null)
                         continue;
@@ -869,7 +873,7 @@ namespace DroneWarehouseMod.Game
 
                     EnsureGuid(b);
                     string id = b.modData[MD.Id];
-                    int  free = _hatchFreeUntil.TryGetValue(id, out var t) ? t : 0;
+                    int free = _hatchFreeUntil.TryGetValue(id, out var t) ? t : 0;
                     bool open = _hatchOpen.TryGetValue(id, out var isOpen) && isOpen;
 
                     if (!open)
@@ -889,9 +893,9 @@ namespace DroneWarehouseMod.Game
                     _hatchFreeUntil[id] = _tick + launchTicks;
                     candidate.BeginLaunching(HatchCenter(b), launchTicks);
 
-                    if (candidate is WaterDrone  && waterWork   > 0) waterWork--;
-                    if (candidate is HarvestDrone&& harvestWork > 0) harvestWork--;
-                    if (candidate is PetDrone    && petWork     > 0) petWork--;
+                    if (candidate is WaterDrone && waterWork > 0) waterWork--;
+                    if (candidate is HarvestDrone && harvestWork > 0) harvestWork--;
+                    if (candidate is PetDrone && petWork > 0) petWork--;
                 }
             }
 
@@ -939,6 +943,32 @@ namespace DroneWarehouseMod.Game
                     _helper.GameContent.InvalidateCache(Keys.Asset_BuildingTexture);
                     ForceReloadWarehouseTextures(farm);
                 }
+            }
+        }
+        
+        private void OnSaving(object? sender, SavingEventArgs e)
+        {
+            try
+            {
+                if (Game1.getFarm() is not Farm farm)
+                    return;
+
+                // 1) Выгрузить весь непустой карго у ВСЕХ карго-дронов (Сборщик / Ороситель, если когда-то будет лут и т.д.)
+                foreach (var d in _drones.ToList())
+                {
+                    if (d is DroneWarehouseMod.Game.Drones.CargoDroneBase cargo && cargo.CargoList.Count > 0)
+                    {
+                        DepositToChest(cargo, cargo.CargoList);
+                        // DepositToChest уже вызывает SaveChestToModData(...) для конкретного здания.
+                    }
+                }
+
+                // 2) На всякий случай сериализуем все сундуки складов в modData (глобальный снимок).
+                PersistChests(farm);
+            }
+            catch (Exception ex)
+            {
+                _mon.Log($"[Saving] unload/persist failed: {ex}", LogLevel.Trace);
             }
         }
 
@@ -1151,7 +1181,7 @@ namespace DroneWarehouseMod.Game
                 RemoveExcess(b, DroneKind.Pet,     haveP - wantP);
 
                 for (int i = haveH; i < wantH; i++)
-                    _drones.Add(new HarvestDrone(b, _harvestAnim, _cfg.HarvestCapacity, _cfg.HarvestSpeed));
+                    _drones.Add(new HarvestDrone(b, _harvestAnim, _cfg.HarvestCapacity, _cfg.HarvestSpeed, _cfg));
                 for (int i = haveW; i < wantW; i++)
                     _drones.Add(new WaterDrone(b, _waterAnim, _cfg.WaterMaxCharges, _cfg.WaterSpeed));
                 for (int i = haveP; i < wantP; i++)
@@ -1200,9 +1230,19 @@ namespace DroneWarehouseMod.Game
 
                 try
                 {
-                    Item harvestItem = ItemRegistry.Create(hd.crop.indexOfHarvest.Value);
-                    if (harvestItem is SObject so && so.Category == SObject.flowersCategory)
-                        continue;
+                    bool isForageCrop = hd.crop.forageCrop?.Value ?? false;
+
+                    // пропускаем обычные цветочные грядки только если включён флаг
+                    if (_cfg.HarvesterSkipFlowerCrops && !isForageCrop)
+                    {
+                        try
+                        {
+                            string qid = DroneWarehouseMod.Core.Qid.Qualify(hd.crop.indexOfHarvest.Value?.ToString() ?? "");
+                            if (ItemRegistry.Create(qid, 1) is SObject so && so.Category == SObject.flowersCategory)
+                                continue; // пропустить цветок
+                        }
+                        catch { /* молча */ }
+                    }
                 }
                 catch { }
 
@@ -1224,14 +1264,19 @@ namespace DroneWarehouseMod.Game
             foreach (var bush in farm.largeTerrainFeatures.OfType<Bush>())
             {
                 if (!BushHasBerries_Manager(bush, farm)) continue;
+                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue; // <— ВСТАВКА
+
                 Point p = BushTile_Manager(bush);
                 if (!_reserved.ContainsKey(p)) count++;
                 if (count >= CAP) return count;
             }
+
             foreach (var tf in farm.terrainFeatures.Pairs)
             {
                 if (tf.Value is not Bush bush) continue;
                 if (!BushHasBerries_Manager(bush, farm)) continue;
+                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue; // <— ВСТАВКА
+
                 Point p = BushTile_Manager(bush);
                 if (!_reserved.ContainsKey(p)) count++;
                 if (count >= CAP) return count;
@@ -1244,25 +1289,54 @@ namespace DroneWarehouseMod.Game
         {
             try
             {
-                if (b?.modData != null
+                if (b is null) return false;
+
+                // уже собран сегодня?
+                if (b.modData != null
                     && b.modData.TryGetValue(MD.BushPickedDay, out var s)
                     && int.TryParse(s, out var day)
                     && day == Game1.Date.TotalDays)
                     return false;
 
-                if (b.size.Value == Bush.greenTeaBush)
+                // авторитетный признак готовности — на спрайте есть «ягоды/листья»
+                int offs = b.tileSheetOffset?.Value ?? 0;
+                return offs > 0;
+            }
+            catch { return false; }
+        }
+
+        private static bool IsStrictVanillaTeaOrBerryBush_Manager(Bush b, GameLocation loc)
+        {
+            try
+            {
+                if (b is null) return false;
+
+                // только точный базовый тип (никаких наследников модов)
+                if (b.GetType() != typeof(Bush))
+                    return false;
+
+                // любые посторонние ключи в modData → считаем модовым кустом
+                var md = b.modData;
+                if (md != null)
                 {
-                    bool lastWeek = Game1.dayOfMonth is >= 22 and <= 28;
-                    if (!lastWeek) return false;
-                    var season = Game1.GetSeasonForLocation(loc);
-                    return season != Season.Winter || (loc?.IsGreenhouse == true);
+                    foreach (var kv in md.Pairs)
+                    {
+                        if (kv.Key == MD.BushPickedDay) continue; // наш служебный ключ
+                        return false;
+                    }
                 }
 
-                bool window =
-                    (Game1.GetSeasonForLocation(loc) == Season.Spring && Game1.dayOfMonth is >= 15 and <= 18) ||
-                    (Game1.GetSeasonForLocation(loc) == Season.Fall   && Game1.dayOfMonth is >= 8  and <= 11);
+                // ваниль: чай
+                if (b.size?.Value == Bush.greenTeaBush)
+                    return true;
 
-                return window && (b.tileSheetOffset?.Value ?? 0) > 0;
+                // ваниль: сезонные ягоды
+                Season s = Game1.GetSeasonForLocation(loc);
+                bool berryWindow =
+                    (s == Season.Spring && Game1.dayOfMonth >= 15 && Game1.dayOfMonth <= 18) ||
+                    (s == Season.Fall   && Game1.dayOfMonth >=  8 && Game1.dayOfMonth <= 11);
+
+                return berryWindow;
             }
             catch { return false; }
         }
@@ -1514,6 +1588,17 @@ namespace DroneWarehouseMod.Game
             }
             cargo.RemoveAll(it => it is null);
             SaveChestToModData(d.Home, chest);
+        }
+
+        public void ForceUnloadAllCargoForTests()
+        {
+            if (Game1.getFarm() is not Farm farm) return;
+
+            foreach (var d in _drones.ToList())
+                if (d is CargoDroneBase cargo && cargo.CargoList.Count > 0)
+                    DepositToChest(cargo, cargo.CargoList);
+
+            PersistChests(farm);
         }
 
         // Качество/XP
