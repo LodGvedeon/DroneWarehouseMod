@@ -482,19 +482,47 @@ namespace DroneWarehouseMod.Game.Drones
                     // XP
                     if (isForageCrop)
                     {
+                        // как и прежде для foraging
                         Game1.player.gainExperience(Farmer.foragingSkill, 3 * addedTotal);
                     }
                     else
                     {
-                        var tmp = (SObject)ItemRegistry.Create(harvestQid, 1);
-                        int oldQ = tmp.Quality;
-                        tmp.Quality = SObject.lowQuality;
-                        int basePrice = tmp.sellToStorePrice();
-                        tmp.Quality = oldQ;
+                        bool isRegrow = regrowDays >= 0;
+                        bool shouldGrantXp = true;
 
-                        int xp = DroneWarehouseMod.Game.DroneManager
-                            .ComputeFarmingXpFromBasePrice(basePrice) * addedTotal;
-                        Game1.player.gainExperience(Farmer.farmingSkill, xp);
+                        if (isRegrow)
+                        {
+                            // гарантируем epoch и проверяем, давали ли XP за ЭТОТ экземпляр
+                            DroneWarehouseMod.Game.DroneManager.EnsurePlantEpoch(hd);
+
+                            string epoch = hd.modData != null && hd.modData.TryGetValue(MD.PlantEpoch, out var e) ? e : "";
+                            string sig   = harvestQid + "|" + epoch;
+
+                            string prevSig  = (hd.modData != null && hd.modData.TryGetValue(MD.RegrowXpSig, out var ps)) ? ps : "";
+                            bool wasGiven   = (prevSig == sig) && (hd.modData != null && hd.modData.ContainsKey(MD.RegrowXpGiven));
+
+                            shouldGrantXp = !wasGiven;
+                            if (shouldGrantXp && hd.modData != null)
+                            {
+                                hd.modData[MD.RegrowXpSig]   = sig;
+                                hd.modData[MD.RegrowXpGiven] = Game1.Date.TotalDays.ToString();
+                            }
+                        }
+
+                        if (shouldGrantXp)
+                        {
+                            var tmp = (SObject)ItemRegistry.Create(harvestQid, 1);
+                            int oldQ = tmp.Quality;
+                            tmp.Quality = SObject.lowQuality;
+                            int basePrice = tmp.sellToStorePrice();
+                            tmp.Quality = oldQ;
+
+                            int xp = DroneWarehouseMod.Game.DroneManager
+                                .ComputeFarmingXpFromBasePrice(basePrice) * addedTotal;
+
+                            Game1.player.gainExperience(Farmer.farmingSkill, xp);
+                        }
+                        // иначе: лут уже собран, но XP за регроу повторно не даём (ваниль)
                     }
 
                     Audio.PlayFarmOnly(farm, "harvest");

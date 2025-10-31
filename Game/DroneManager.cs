@@ -94,7 +94,10 @@ namespace DroneWarehouseMod.Game
         public void OnNewDay()
         {
             if (Game1.getFarm() is Farm farm)
+            {
                 RecallAllDronesHome(farm);
+                CleanupRegrowFlags(farm); // <— НОВОЕ
+            }
 
             foreach (var d in _drones)
                 if (d is WaterDrone w) w.RefillToMax();
@@ -598,6 +601,63 @@ namespace DroneWarehouseMod.Game
                         hs.Add(new Point(x, y));
             }
             return hs.OrderBy(t => t.Y).ThenBy(t => t.X).ToList();
+        }
+
+        private void CleanupRegrowFlags(Farm farm)
+        {
+            try
+            {
+                foreach (var kv in farm.terrainFeatures.Pairs)
+                {
+                    if (kv.Value is not HoeDirt hd || hd.modData == null) continue;
+
+                    if (hd.crop == null)
+                    {
+                        // Грядка пустая — стираем наши следы
+                        hd.modData.Remove(MD.PlantEpoch);
+                        hd.modData.Remove(MD.RegrowXpSig);
+                        hd.modData.Remove(MD.RegrowXpGiven);
+                        continue;
+                    }
+
+                    // Для одноразовых культур блокировка XP не нужна
+                    int regrowDays = -1;
+                    try { regrowDays = hd.crop.GetData()?.RegrowDays ?? -1; } catch { }
+                    if (regrowDays < 0)
+                    {
+                        hd.modData.Remove(MD.RegrowXpSig);
+                        hd.modData.Remove(MD.RegrowXpGiven);
+                        // PlantEpoch можно оставить — не мешает
+                    }
+                }
+            }
+            catch { /* тихо */ }
+        }
+        internal static void EnsurePlantEpoch(HoeDirt hd)
+        {
+            try
+            {
+                if (hd?.crop == null || hd.modData == null) return;
+
+                bool justPlantedToday =
+                    hd.crop.currentPhase.Value == 0 &&
+                    hd.crop.dayOfCurrentPhase.Value == 0 &&
+                    !hd.crop.fullyGrown.Value;
+
+                if (justPlantedToday)
+                {
+                    // новая "эпоха" и сброс блокировок XP
+                    hd.modData[MD.PlantEpoch] = Guid.NewGuid().ToString("N");
+                    hd.modData.Remove(MD.RegrowXpSig);
+                    hd.modData.Remove(MD.RegrowXpGiven);
+                }
+                else if (!hd.modData.ContainsKey(MD.PlantEpoch))
+                {
+                    // лениво создаём epoch для старых сейвов/уже выросших растений
+                    hd.modData[MD.PlantEpoch] = Guid.NewGuid().ToString("N");
+                }
+            }
+            catch { /* тихо */ }
         }
 
         public bool TryStartFarmerFromBeacons(Building b, Farm farm, out string reason)
