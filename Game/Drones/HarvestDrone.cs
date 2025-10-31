@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using Netcode;
 using Microsoft.Xna.Framework;
 using StardewValley.Buildings;
 using StardewValley.TerrainFeatures;
@@ -18,6 +20,7 @@ namespace DroneWarehouseMod.Game.Drones
         private readonly float _speed;
         public override float SpeedPxPerTick => _speed;
         private readonly ModConfig _managerConfig;
+        private FruitTree? _targetFruitTree;
 
         private struct ExtraDropInfo
             {
@@ -37,11 +40,18 @@ namespace DroneWarehouseMod.Game.Drones
         protected override bool TryAcquireWork(Farm farm, DroneManager mgr, out Point tile, out WorkKind kind)
         {
             tile = default; kind = WorkKind.None;
+
+            // сброс прошлых целей
+            _targetBush = null;
+            _targetFruitTree = null;
+
             double bestDist = double.MaxValue;
             Point best = default; WorkKind bestKind = WorkKind.None;
-            _targetBush = null; // сбрасываем прошлую цель-куст
 
-            // --- 1) спелые грядки (не цветы) ---
+            FruitTree? candFruitTree = null;
+            Bush? candBush = null;
+
+            // 1) спелые грядки (не цветы)
             foreach (var pair in farm.terrainFeatures.Pairs)
             {
                 if (pair.Value is not HoeDirt hd || hd.crop is null) continue;
@@ -50,8 +60,6 @@ namespace DroneWarehouseMod.Game.Drones
                 try
                 {
                     bool isForageCrop = hd.crop.forageCrop?.Value ?? false;
-
-                    // менеджер отдаёт значение из конфига
                     if (mgr.SkipFlowerCrops && !isForageCrop)
                     {
                         try
@@ -60,7 +68,7 @@ namespace DroneWarehouseMod.Game.Drones
                             if (ItemRegistry.Create(qid, 1) is SObject so && so.Category == SObject.flowersCategory)
                                 continue;
                         }
-                        catch { /* молча */ }
+                        catch { }
                     }
                 }
                 catch { }
@@ -68,22 +76,54 @@ namespace DroneWarehouseMod.Game.Drones
                 Point p = new((int)pair.Key.X, (int)pair.Key.Y);
                 if (mgr.IsTileReserved(p)) continue;
 
-                double dist = Vector2.Distance(this.Position, DroneManager.TileCenter(p));
-                if (dist < bestDist) { bestDist = dist; best = p; bestKind = WorkKind.HarvestCrop; }
+                double dist = Vector2.Distance(this.Position, DroneWarehouseMod.Game.DroneManager.TileCenter(p));
+                if (dist < bestDist)
+                {
+                    bestDist = dist; best = p; bestKind = WorkKind.HarvestCrop;
+                    candFruitTree = null; candBush = null;
+                }
             }
 
-            // --- 2) дары природы на земле (IsSpawnedObject) ---
+            // 2) дары природы на земле
             foreach (var pair in farm.objects.Pairs)
             {
                 if (pair.Value is not SObject o || !o.IsSpawnedObject) continue;
                 Point p = new((int)pair.Key.X, (int)pair.Key.Y);
                 if (mgr.IsTileReserved(p)) continue;
 
-                double dist = Vector2.Distance(this.Position, DroneManager.TileCenter(p));
-                if (dist < bestDist) { bestDist = dist; best = p; bestKind = WorkKind.PickupForage; }
+                double dist = Vector2.Distance(this.Position, DroneWarehouseMod.Game.DroneManager.TileCenter(p));
+                if (dist < bestDist)
+                {
+                    bestDist = dist; best = p; bestKind = WorkKind.PickupForage;
+                    candFruitTree = null; candBush = null;
+                }
             }
 
-            // --- 3) ягодные кусты с ягодами ---
+            // 3) плодовые деревья (1.6+)
+            if (!_managerConfig.HarvesterSkipFruitTrees)
+            {
+                foreach (var pair in farm.terrainFeatures.Pairs)
+                {
+                    if (pair.Value is not FruitTree ft) continue;
+
+                    int fruitCount = 0;
+                    try { fruitCount = ft.fruit?.Count ?? 0; } catch { fruitCount = 0; }
+                    if (fruitCount <= 0) continue;
+
+                    Point p = new((int)pair.Key.X, (int)pair.Key.Y);
+                    if (mgr.IsTileReserved(p)) continue;
+
+                    double dist = Vector2.Distance(this.Position, DroneWarehouseMod.Game.DroneManager.TileCenter(p));
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist; best = p; bestKind = WorkKind.PickupForage;
+                        candFruitTree = ft;
+                        candBush = null;
+                    }
+                }
+            }
+
+            // 4) кусты (ваниль)
             IEnumerable<Bush> BushStream()
             {
                 foreach (var ltf in farm.largeTerrainFeatures)
@@ -94,28 +134,28 @@ namespace DroneWarehouseMod.Game.Drones
 
             foreach (var bush in BushStream())
             {
-                if (!BushHasBerries(bush, farm))
-                    continue;
+                if (!BushHasBerries(bush, farm)) continue;
 
-                // Ключевая строка: берём в работу только кусты с ВАНИЛЬНЫМ дропом
                 string dropQid = GetBushDropQid(farm, bush);
-                if (string.IsNullOrEmpty(dropQid))
-                    continue; // модовый куст => не кандидат, дрон не полетит
+                if (string.IsNullOrEmpty(dropQid)) continue;
 
                 Point p = BushTile(bush);
                 if (mgr.IsTileReserved(p)) continue;
 
-                double dist = Vector2.Distance(this.Position, DroneManager.TileCenter(p));
+                double dist = Vector2.Distance(this.Position, DroneWarehouseMod.Game.DroneManager.TileCenter(p));
                 if (dist < bestDist)
                 {
-                    bestDist = dist; best = p;
-                    bestKind = WorkKind.PickupForage;   // «сбор»
-                    _targetBush = bush;                 // запоминаем цель
+                    bestDist = dist; best = p; bestKind = WorkKind.PickupForage;
+                    candBush = bush;
+                    candFruitTree = null;
                 }
             }
 
             if (bestKind != WorkKind.None)
             {
+                _targetBush = candBush;
+                _targetFruitTree = candFruitTree;
+
                 mgr.ReserveTile(best, this);
                 tile = best;
                 kind = bestKind;
@@ -124,6 +164,7 @@ namespace DroneWarehouseMod.Game.Drones
 
             return false;
         }
+
 
         private static bool TryGetExtraDropFromData(CropData data, out ExtraDropInfo info)
         {
@@ -272,7 +313,6 @@ namespace DroneWarehouseMod.Game.Drones
                 }
             }
         }
-
         private static int ComputeBushHarvestCount(Farmer who, Bush bush, GameLocation loc)
         {
             // Чайный куст всегда даёт 1 лист
@@ -299,7 +339,6 @@ namespace DroneWarehouseMod.Game.Drones
             var s = value.ToString() ?? string.Empty;
             return Qid.Qualify(s);
         }
-
         private static void MarkBushPickedToday(Bush bush)
         {
             try
@@ -325,53 +364,64 @@ namespace DroneWarehouseMod.Game.Drones
         // === DroneWarehouseMod.Game.Drones.HarvestDrone ===
         protected override void DoWorkAt(Farm farm, DroneManager mgr, Point p, WorkKind kind)
         {
-            // Если груз полон — ничего не трогаем (не «съедаем» ресурс)
             if (CargoFull())
                 return;
 
             Vector2 v = new(p.X, p.Y);
 
-            // --- A) Дары природы на земле ---
-            if (kind == WorkKind.PickupForage && _targetBush == null)
+            // A) Плодовое дерево (1.6+): берём предметы прямо из списка ft.fruit
+            if (kind == WorkKind.PickupForage && _targetFruitTree != null)
             {
-                if (farm.objects.TryGetValue(v, out var obj) && obj is SObject drop && drop.IsSpawnedObject)
+                var tree = _targetFruitTree;
+                _targetFruitTree = null;
+
+                var list = tree?.fruit;
+                if (list == null || list.Count <= 0) return;
+
+                int given = 0;
+                try
                 {
-                    var one = (SObject)drop.getOne();
-                    one.Stack = drop.Stack;
+                    // снимаем плоды до заполнения карго
+                    while (list.Count > 0 && !CargoFull())
+                    {
+                        var it = list[list.Count - 1];
+                        list.RemoveAt(list.Count - 1);
 
-                    // Ботаник (Foraging 10): всегда иридиевое качество
-                    if (Game1.player.professions.Contains(Farmer.botanist))
-                        one.Quality = SObject.bestQuality;
+                        // Обычно это SObject, но карго — List<Item>, так что кладём как есть.
+                        if (it is SObject so)
+                        {
+                            _cargo.Add(so);
+                            given++;
+                        }
+                        else if (it != null)
+                        {
+                            // На всякий случай — если модовые деревья кладут не-Object
+                            _cargo.Add(it);
+                            given++;
+                        }
+                    }
+                }
+                catch { /* молча */ }
 
-                    _cargo.Add(one);
-
-                    Game1.player.gainExperience(Farmer.foragingSkill, 7);
-                    farm.objects.Remove(v);
-
-                    // звук только если игрок на ферме
+                if (given > 0)
+                {
                     Audio.PlayFarmOnly(farm, "harvest");
                 }
                 return;
             }
 
-            // --- B) Сбор с ягодного/чайного куста ---
+            // B) Ягодный/чайный куст (как было)
             if (kind == WorkKind.PickupForage && _targetBush != null)
             {
                 var bush = _targetBush;
                 _targetBush = null;
 
-                // Новое: если внезапно оказался не-ванильный — выходим
-                if (!IsStrictVanillaTeaOrBerryBush(bush, farm))
-                    return;
-
-                if (!BushHasBerries(bush, farm))
-                    return;
+                if (!IsStrictVanillaTeaOrBerryBush(bush, farm)) return;
+                if (!BushHasBerries(bush, farm)) return;
 
                 string dropQid = GetBushDropQid(farm, bush);
-                if (string.IsNullOrEmpty(dropQid))
-                    return;
+                if (string.IsNullOrEmpty(dropQid)) return;
 
-                // Сколько дать (ванильная логика), без спавна debris
                 int qty = ComputeBushHarvestCount(Game1.player, bush, farm);
                 if (qty <= 0) qty = 1;
 
@@ -380,7 +430,6 @@ namespace DroneWarehouseMod.Game.Drones
                 {
                     if (ItemRegistry.Create(dropQid, 1) is SObject so)
                     {
-                        // Ботаник (Foraging 10): всегда иридиевая
                         if (Game1.player.professions.Contains(Farmer.botanist))
                             so.Quality = SObject.bestQuality;
 
@@ -389,7 +438,6 @@ namespace DroneWarehouseMod.Game.Drones
                     }
                 }
 
-                // Помечаем куст «собран сегодня» и звуки/XP — только если реально взяли
                 if (given > 0)
                 {
                     MarkBushPickedToday(bush);
@@ -399,7 +447,27 @@ namespace DroneWarehouseMod.Game.Drones
                 return;
             }
 
-            // --- C) Урожай с грядки ---
+            // C) Дары природы на земле (как было)
+            if (kind == WorkKind.PickupForage && _targetBush == null && _targetFruitTree == null)
+            {
+                if (farm.objects.TryGetValue(v, out var obj) && obj is SObject drop && drop.IsSpawnedObject)
+                {
+                    var one = (SObject)drop.getOne();
+                    one.Stack = drop.Stack;
+
+                    if (Game1.player.professions.Contains(Farmer.botanist))
+                        one.Quality = SObject.bestQuality;
+
+                    _cargo.Add(one);
+
+                    Game1.player.gainExperience(Farmer.foragingSkill, 7);
+                    farm.objects.Remove(v);
+                    Audio.PlayFarmOnly(farm, "harvest");
+                }
+                return;
+            }
+
+            // D) Урожай с грядки (как было, без изменений в этой части)
             if (kind != WorkKind.HarvestCrop)
                 return;
 
@@ -412,11 +480,9 @@ namespace DroneWarehouseMod.Game.Drones
             {
                 string harvestQid = Qid.Qualify(crop.indexOfHarvest.Value?.ToString() ?? "");
 
-                // 1.6: прямой доступ к CropData
-                CropData? data = null;
+                StardewValley.GameData.Crops.CropData? data = null;
                 try { data = crop.GetData(); } catch { /* fallback */ }
 
-                // Базовые поля с безопасными дефолтами
                 int min = 1;
                 int max = 1;
                 int regrowDays = -1;
@@ -426,22 +492,17 @@ namespace DroneWarehouseMod.Game.Drones
                 {
                     min = Math.Max(1, data.HarvestMinStack);
                     max = Math.Max(min, data.HarvestMaxStack);
-                    // жёстко уводим вычисление в float: MathF + явное (float)
                     extraChance = MathF.Max(0f, (float)data.ExtraHarvestChance);
                     regrowDays = data.RegrowDays;
                 }
 
-                // Количество основного урожая
                 int qty = Game1.random.Next(min, max + 1);
-
-                // сравниваем double с double, чтобы не было даункаста
                 while (Game1.random.NextDouble() < (double)extraChance)
                     qty++;
 
                 bool isForageCrop = crop.forageCrop?.Value ?? false;
                 int quality = DroneWarehouseMod.Game.DroneManager.RollCropQuality(hd, Game1.player);
 
-                // ---------- (1) ОСНОВНОЙ УРОЖАЙ ----------
                 int addedMain = 0;
                 for (int i = 0; i < qty && !CargoFull(); i++)
                 {
@@ -453,7 +514,6 @@ namespace DroneWarehouseMod.Game.Drones
                     }
                 }
 
-                // ---------- (2) ДОПОЛНИТЕЛЬНЫЙ ПРЕДМЕТ ИЗ CropData (если задан) ----------
                 int addedExtra = 0;
                 if (data != null && TryGetExtraDropFromData(data, out var extra))
                 {
@@ -464,7 +524,6 @@ namespace DroneWarehouseMod.Game.Drones
                         {
                             if (ItemRegistry.Create(extra.Qid, 1) is SObject soExtra)
                             {
-                                // Обычно к доп-предмету качество не применяется.
                                 _cargo.Add(soExtra);
                                 addedExtra++;
                             }
@@ -472,17 +531,13 @@ namespace DroneWarehouseMod.Game.Drones
                     }
                 }
 
-                // Бонусное сено для пшеницы — как было.
                 TryAddBonusHay(harvestQid);
 
-                // ---------- (3) ФИНАЛ: XP/звук/регроу — только если ЧТО‑ТО реально взяли ----------
                 int addedTotal = addedMain + addedExtra;
                 if (addedTotal > 0)
                 {
-                    // XP
                     if (isForageCrop)
                     {
-                        // как и прежде для foraging
                         Game1.player.gainExperience(Farmer.foragingSkill, 3 * addedTotal);
                     }
                     else
@@ -492,20 +547,19 @@ namespace DroneWarehouseMod.Game.Drones
 
                         if (isRegrow)
                         {
-                            // гарантируем epoch и проверяем, давали ли XP за ЭТОТ экземпляр
                             DroneWarehouseMod.Game.DroneManager.EnsurePlantEpoch(hd);
 
-                            string epoch = hd.modData != null && hd.modData.TryGetValue(MD.PlantEpoch, out var e) ? e : "";
+                            string epoch = hd.modData != null && hd.modData.TryGetValue(DroneWarehouseMod.Core.ModDataKeys.PlantEpoch, out var e) ? e : "";
                             string sig   = harvestQid + "|" + epoch;
 
-                            string prevSig  = (hd.modData != null && hd.modData.TryGetValue(MD.RegrowXpSig, out var ps)) ? ps : "";
-                            bool wasGiven   = (prevSig == sig) && (hd.modData != null && hd.modData.ContainsKey(MD.RegrowXpGiven));
+                            string prevSig  = (hd.modData != null && hd.modData.TryGetValue(DroneWarehouseMod.Core.ModDataKeys.RegrowXpSig, out var ps)) ? ps : "";
+                            bool wasGiven   = (prevSig == sig) && (hd.modData != null && hd.modData.ContainsKey(DroneWarehouseMod.Core.ModDataKeys.RegrowXpGiven));
 
                             shouldGrantXp = !wasGiven;
                             if (shouldGrantXp && hd.modData != null)
                             {
-                                hd.modData[MD.RegrowXpSig]   = sig;
-                                hd.modData[MD.RegrowXpGiven] = Game1.Date.TotalDays.ToString();
+                                hd.modData[DroneWarehouseMod.Core.ModDataKeys.RegrowXpSig]   = sig;
+                                hd.modData[DroneWarehouseMod.Core.ModDataKeys.RegrowXpGiven] = Game1.Date.TotalDays.ToString();
                             }
                         }
 
@@ -522,7 +576,6 @@ namespace DroneWarehouseMod.Game.Drones
 
                             Game1.player.gainExperience(Farmer.farmingSkill, xp);
                         }
-                        // иначе: лут уже собран, но XP за регроу повторно не даём (ваниль)
                     }
 
                     Audio.PlayFarmOnly(farm, "harvest");
@@ -538,7 +591,6 @@ namespace DroneWarehouseMod.Game.Drones
                         hd.crop = null;
                     }
                 }
-                // иначе — ничего не удаляем с грядки (груз мог забиться)
             }
             catch
             {

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Netcode;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -1000,7 +1001,7 @@ namespace DroneWarehouseMod.Game
                 }
             }
         }
-        
+                
         private void OnSaving(object? sender, SavingEventArgs e)
         {
             try
@@ -1315,31 +1316,54 @@ namespace DroneWarehouseMod.Game
                 if (count >= CAP) return count;
             }
 
-            // C) Ягодные кусты
+            // C) Ягодные кусты (ваниль)
             foreach (var bush in farm.largeTerrainFeatures.OfType<Bush>())
             {
                 if (!BushHasBerries_Manager(bush, farm)) continue;
-                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue; // <— ВСТАВКА
+                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue;
 
                 Point p = BushTile_Manager(bush);
                 if (!_reserved.ContainsKey(p)) count++;
                 if (count >= CAP) return count;
             }
-
             foreach (var tf in farm.terrainFeatures.Pairs)
             {
                 if (tf.Value is not Bush bush) continue;
                 if (!BushHasBerries_Manager(bush, farm)) continue;
-                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue; // <— ВСТАВКА
+                if (!IsStrictVanillaTeaOrBerryBush_Manager(bush, farm)) continue;
 
                 Point p = BushTile_Manager(bush);
                 if (!_reserved.ContainsKey(p)) count++;
                 if (count >= CAP) return count;
             }
 
+            // D) Плодовые деревья (1.6+): берём, если на дереве есть ХОТЯ БЫ 1 предмет в списке fruit.
+            if (!_cfg.HarvesterSkipFruitTrees)
+            {
+                foreach (var tf in farm.terrainFeatures.Pairs)
+                {
+                    if (tf.Value is not FruitTree ft) continue;
+
+                    // в 1.6 плоды лежат в списке ft.fruit; он уже содержит предметы с нужным качеством
+                    int n = 0;
+                    try { n = ft.fruit?.Count ?? 0; } catch { n = 0; }
+                    if (n <= 0) continue;
+
+                    // (опционально можно пропускать «грозовые» дни; по умолчанию собираем и уголь тоже)
+                    // if ((ft.struckByLightningCountdown?.Value ?? 0) > 0) continue;
+
+                    Point p = new((int)tf.Key.X, (int)tf.Key.Y);
+                    if (!_reserved.ContainsKey(p))
+                    {
+                        count++;
+                        _mon?.Log($"[DroneWarehouse] Fruit tree ready at {tf.Key} (fruit: {n})", LogLevel.Trace);
+                    }
+                    if (count >= CAP) return count;
+                }
+            }
+
             return count;
         }
-
         private static bool BushHasBerries_Manager(Bush b, GameLocation loc)
         {
             try

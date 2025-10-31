@@ -16,6 +16,7 @@ namespace DroneWarehouseMod
 
         public bool AllowRefillAtHatchIfNoWater { get; set; } = true;
         public bool HarvesterSkipFlowerCrops { get; set; } = true;
+        public bool HarvesterSkipFruitTrees { get; set; } = true;
 
         // Pathing
         public int NoFlyPadTiles   { get; set; } = 1;
