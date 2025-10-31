@@ -21,5 +21,10 @@ namespace DroneWarehouseMod.Core
         public const string Beacon      = Prefix + "Beacon";
         public const string BeaconSize  = Prefix + "Beacon.Size";
         public const string BeaconOwner = Prefix + "Beacon.Owner";
+        
+        // Ключи для выдачи опыта для многократных культур
+        public const string PlantEpoch    = "DroneWH/PlantEpoch";
+        public const string RegrowXpSig   = "DroneWH/RegrowXpSig";
+        public const string RegrowXpGiven = "DroneWH/RegrowXpGiven";
     }
 }

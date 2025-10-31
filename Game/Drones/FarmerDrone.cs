@@ -28,6 +28,11 @@ namespace DroneWarehouseMod.Game.Drones
         public bool HasJob => _tiles.Count > 0;
         private bool _tilledPhaseDone = false;
 
+        // NEW: наборы удобрений по приоритету
+            private static readonly string[] QualityFerts = { "(O)919", "(O)369", "(O)368" }; // Deluxe, Quality, Basic
+            private static readonly string[] SpeedFerts   = { "(O)918", "(O)466", "(O)465" }; // Hyper, Deluxe, Regular
+            private static readonly string[] RetainFerts  = { "(O)920", "(O)371", "(O)370" }; // Deluxe, Quality, Basic
+
         public FarmerDrone(Building home, DroneAnimSet anim, float speed, int plantSeconds, int clearSeconds)
             : base(home, anim)
         {
@@ -229,6 +234,57 @@ namespace DroneWarehouseMod.Game.Drones
             return false;
         }
 
+        private static bool TryTakeFertilizerFromChest(Chest chest, string[] allowList, out string fertQid)
+        {
+            fertQid = string.Empty;
+            if (chest?.Items is null) return false;
+
+            for (int i = 0; i < chest.Items.Count; i++)
+            {
+                if (chest.Items[i] is not SObject o || o.Stack <= 0) continue;
+
+                // Ищем строго по QID (формат "(O)id"),
+                // если у предмета QID без префикса — превращаем в QID.
+                string qid = o.QualifiedItemId;
+                // Разрешён ли такой вид удобрения
+                if (allowList.Contains(qid))
+                {
+                    o.Stack -= 1;
+                    if (o.Stack <= 0) chest.Items[i] = null;
+                    fertQid = qid;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // NEW: ставим удобрение в HoeDirt (ничего не делаем, если уже есть удобрение)
+        private static bool TryApplyFertilizerBeforePlant(HoeDirt soil, Chest chest, GameLocation loc)
+        {
+            try
+            {
+                if (soil is null || soil.fertilizer is null) return false;
+
+                string cur = soil.fertilizer.Value ?? string.Empty;
+                if (!string.IsNullOrEmpty(cur))
+                    return false; // уже стоит удобрение
+
+                // Приоритет: Quality → Speed → Retain
+                // (Speed важно ставить до посадки, мы именно так и делаем)
+                string fert;
+                if (TryTakeFertilizerFromChest(chest, QualityFerts, out fert) ||
+                    TryTakeFertilizerFromChest(chest, SpeedFerts,   out fert) ||
+                    TryTakeFertilizerFromChest(chest, RetainFerts,  out fert))
+                {
+                    soil.fertilizer.Value = fert;   // строковый QID подходит для 1.6
+                    try { loc?.localSound("dirtyHit"); } catch { }
+                    return true;
+                }
+            }
+            catch { /* тихо */ }
+            return false;
+        }
+
         private static bool TryConsumeOneSeed(Chest chest, string seedQid)
         {
             if (string.IsNullOrEmpty(seedQid)) return false;
@@ -355,6 +411,8 @@ namespace DroneWarehouseMod.Game.Drones
 
                 try
                 {
+                    TryApplyFertilizerBeforePlant(hd, chest, farm);
+                    
                     planted = PlantCompat.TryPlantCompat(hd, seedToUse, farm, tile.X, tile.Y, Game1.player, false);
                 }
                 catch { planted = false; }
