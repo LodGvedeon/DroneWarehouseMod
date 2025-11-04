@@ -28,9 +28,11 @@
   "building.name": "Drone Warehouse",
   "building.description": "A building where you can create various drones.\nThey can do some farm work for you.",
 
-  "farmer.reason.noBeacons": "No beacons or selected areas.",
+  "farmer.reason.noBeacons": "No selected areas.",
   "farmer.reason.noTiles": "No suitable tiles.",
   "farmer.reason.noSeeds": "No suitable seeds for the current season in the warehouse chest.",
   "farmer.reason.noFarmer": "Farmer drone has not been created.",
-  "farmer.reason.addedToQueue": "Added to queue: {{count}} tiles."
+  "farmer.reason.addedToQueue": "Added to queue: {{count}} tiles.",
+  "farmer.reason.notEnoughSeeds": "Not enough seasonal seeds: need {{need}}, in chest {{have}}.",
+  "farmer.reason.scheduled": "Scheduled: {{count}} tiles."
 }

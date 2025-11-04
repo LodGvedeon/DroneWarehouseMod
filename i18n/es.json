@@ -28,9 +28,11 @@
   "building.name": "Almacén de drones",
   "building.description": "Un edificio donde puedes crear varios drones. Pueden realizar algunos trabajos agrícolas para ti.",
   
-  "farmer.reason.noBeacons": "Sin balizas ni zonas seleccionadas.",
+  "farmer.reason.noBeacons": "Sin zonas seleccionadas.",
   "farmer.reason.noTiles": "No hay fichas adecuadas.",
   "farmer.reason.noSeeds": "No hay semillas adecuadas para la temporada actual en el cofre del almacén.",
   "farmer.reason.noFarmer": "Drone agricultor no ha sido creado.",
-  "farmer.reason.addedToQueue": "Añadido a la cola: {{count}} Azulejos."
+  "farmer.reason.addedToQueue": "Añadido a la cola: {{count}} Azulejos.",
+  "farmer.reason.notEnoughSeeds": "No hay suficientes semillas de temporada: se necesitan {{need}}, en el cofre {{have}}.",
+  "farmer.reason.scheduled": "Programado: {{count}} Azulejos."
 }

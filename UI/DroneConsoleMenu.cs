@@ -49,13 +49,6 @@ namespace DroneWarehouseMod.UI
         private static readonly Color TxtMain   = new Color(168, 255, 138);
         private static readonly Color TxtShadow = new Color(28, 58, 28);
 
-        // Вместимость по уровню
-        private static int CapacityByLevel(int level) => level switch
-        {
-            >= 3 => 9,
-            2 => 6,
-            _ => 3,
-        };
 
         // Стоимость апгрейдов
         private static readonly Dictionary<int, int> COST_1_TO_2 = new()
@@ -218,7 +211,7 @@ namespace DroneWarehouseMod.UI
             bool levelOkW = level >= 2;
             bool levelOkP = level >= 3;
 
-            int capacity = CapacityByLevel(level);
+            int capacity = _manager.CapacityByLevel(level);
             bool atMaxLevel = level >= 3;
             bool blockedByMax = total >= capacity;
 
@@ -370,7 +363,7 @@ namespace DroneWarehouseMod.UI
             bool levelOkW = level >= 2;
             bool levelOkP = level >= 3;
 
-            int capacity = CapacityByLevel(level);
+            int capacity = _manager.CapacityByLevel(level);
             bool atMaxLevel = level >= 3;
 
             // Уровень

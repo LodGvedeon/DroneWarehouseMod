@@ -28,9 +28,11 @@
   "building.name": "Склад дронов",
   "building.description": "Здание, в котором вы можете создавать различные дроны.\nОни могут выполнять за вас некоторую работу на ферме",
 
-  "farmer.reason.noBeacons": "Нет маяков или выделенных зон.",
+  "farmer.reason.noBeacons": "Нет выделенных зон.",
   "farmer.reason.noTiles": "Подходящих клеток нет.",
   "farmer.reason.noSeeds": "Нет подходящих семян для текущего сезона в сундуке склада.",
   "farmer.reason.noFarmer": "Дрон-фермер не создан.",
-  "farmer.reason.addedToQueue": "Добавлено в очередь: {{count}} клеток."
+  "farmer.reason.addedToQueue": "Добавлено в очередь: {{count}} клеток.",
+  "farmer.reason.notEnoughSeeds": "Не хватает сезонных семян: нужно {{need}}, в сундуке {{have}}.",
+  "farmer.reason.scheduled": "Запланировано: {{count}} клеток."
 }

@@ -104,6 +104,7 @@
 | `HarvesterSkipFruitTrees` | `false` | Будут ли собираться плоды деревьев |
 | `NoFlyPadTiles` | `1` | Буфер вокруг зданий |
 | `LineOfSightPadPx` | `12` | Отступ при проверке прямой видимости |
+| `WarehouseCapacityByLevel` | `3,6,9` | КОличество дронов на уровень |
 | `HarvestCapacity`, `WaterMaxCharges`, `PetMaxCharges` | `10` | Вместимость/заряды |
 | `HarvestSpeed`, `WaterSpeed`, `PetSpeed`, `FarmerSpeed` | `2.6 / 1.3 / 1.3 / 2.0` | Скорость (px/тик) |
 | `FarmerWorkSeconds`, `FarmerClearSeconds` | `2 / 1` | Длительность работы |

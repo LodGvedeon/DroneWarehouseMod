@@ -40,11 +40,6 @@ namespace DroneWarehouseMod
         private DroneManager _manager = null!;
         private Building? _selectionOwner;
 
-        // Отложенная пометка новых «маяков»
-        private int _pendingBeaconCount = 0;
-        private string? _pendingBeaconOwner = null;
-        private int _pendingBeaconSize = 0;
-
         private int _deferredRebuildTicks = 0;
 
         public override void Entry(IModHelper helper)
@@ -123,8 +118,6 @@ namespace DroneWarehouseMod
             helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
             helper.Events.GameLoop.Saving += this.OnSaving;
             helper.Events.World.BuildingListChanged += this.OnBuildingListChanged;
-            helper.Events.Player.InventoryChanged += this.OnInventoryChanged;
-            helper.Events.World.ObjectListChanged += this.OnObjectListChanged;
 
             // Локальные загрузчики кадров/текстур
             Texture2D[] LoadFramesSeq(string pattern, int count, Texture2D fallback)
@@ -457,14 +450,14 @@ namespace DroneWarehouseMod
 
         private void HandleWarehouseInteraction(Farm farm, Vector2 grabTile, ButtonPressedEventArgs e)
         {
-            Building? warehouse = farm.getBuildingAt(grabTile);
-            if (warehouse == null || warehouse.buildingType.Value != "DroneWarehouse")
+            Building? warehouse = TryResolveWarehouseForInteraction(farm, grabTile);
+            if (warehouse == null)
                 return;
 
             int leftX = warehouse.tileX.Value;
             int rightX = warehouse.tileX.Value + warehouse.tilesWide.Value - 1;
-            int topY  = warehouse.tileY.Value;
-            int botY  = warehouse.tileY.Value + warehouse.tilesHigh.Value - 1;
+            int topY = warehouse.tileY.Value;
+            int botY = warehouse.tileY.Value + warehouse.tilesHigh.Value - 1;
 
             int gx = Math.Clamp((int)grabTile.X, leftX, rightX);
             int gy = Math.Clamp((int)grabTile.Y, topY, botY);
@@ -484,50 +477,102 @@ namespace DroneWarehouseMod
             }
             this.Helper.Input.Suppress(e.Button);
         }
-
-        private void OnInventoryChanged(object? sender, InventoryChangedEventArgs e)
+        
+        private Building? TryResolveWarehouseForInteraction(Farm farm, Vector2 grabTile)
         {
-            if (!Context.IsWorldReady || !e.IsLocalPlayer) return;
+            static bool IsWh(Building? b) => b != null && b.buildingType?.Value == "DroneWarehouse";
 
-            // Учёт размещённых «маяков» (факелы с modData)
-            foreach (var item in e.Removed)
+            // 1) Точный тайл (мышь)
+            var b = farm.getBuildingAt(grabTile);
+            if (IsWh(b)) return b;
+
+            // Вектор шага по взгляду
+            Vector2 me = Game1.player.Tile;
+            int dx = Math.Sign((int)grabTile.X - (int)me.X);
+            int dy = Math.Sign((int)grabTile.Y - (int)me.Y);
+
+            // 2) +1..+2 тайла вперёд (контроллер)
+            Vector2 t = grabTile;
+            for (int i = 0; i < 2; i++)
             {
-                if (item is SObject o && !o.bigCraftable.Value && o.ParentSheetIndex == 93 && o.modData.ContainsKey(MD.Beacon))
-                {
-                    _pendingBeaconOwner ??= (o.modData.TryGetValue(MD.BeaconOwner, out var owner) ? owner : null);
-                    if (_pendingBeaconSize == 0 && o.modData.TryGetValue(MD.BeaconSize, out var s) && int.TryParse(s, out var z))
-                        _pendingBeaconSize = z;
+                t += new Vector2(dx, dy);
+                b = farm.getBuildingAt(t);
+                if (IsWh(b)) return b;
+            }
 
-                    _pendingBeaconCount += Math.Max(1, o.Stack);
+            // 3) Фронтальная полоса: тайл ровно перед фасадом
+            Building? bestFront = null;
+            float bestFrontDist = float.MaxValue;
+            foreach (var cand in farm.buildings)
+            {
+                if (!IsWh(cand)) continue;
+
+                int leftX  = cand.tileX.Value;
+                int rightX = cand.tileX.Value + cand.tilesWide.Value - 1;
+                int frontY = cand.tileY.Value + cand.tilesHigh.Value; // на 1 тайл ниже низа
+
+                if ((int)grabTile.Y == frontY && (int)grabTile.X >= leftX && (int)grabTile.X <= rightX)
+                {
+                    float d = Vector2.Distance(Game1.player.Tile, new Vector2(leftX + cand.tilesWide.Value / 2f, frontY));
+                    if (d < bestFrontDist) { bestFrontDist = d; bestFront = cand; }
                 }
             }
+            if (bestFront != null) return bestFront;
+
+            // 4) Короткий рейкаст (2.8 тайла) по направлению взгляда
+            if (dx != 0 || dy != 0)
+            {
+                Vector2 origin = Game1.player.Position + new Vector2(Game1.tileSize / 2f, Game1.tileSize * 0.75f);
+                Vector2 target = origin + new Vector2(dx, dy) * (Game1.tileSize * 2.8f);
+
+                Building? best = null;
+                float bestSq = float.MaxValue;
+
+                foreach (var cand in farm.buildings)
+                {
+                    if (!IsWh(cand)) continue;
+
+                    Rectangle rect = new Rectangle(
+                        cand.tileX.Value * Game1.tileSize,
+                        cand.tileY.Value * Game1.tileSize,
+                        cand.tilesWide.Value * Game1.tileSize,
+                        cand.tilesHigh.Value * Game1.tileSize
+                    );
+                    rect.Inflate(8, 8); // небольшой люфт
+
+                    if (SegmentIntersectsRect(rect, origin, target))
+                    {
+                        float dsq = Vector2.DistanceSquared(origin, new Vector2(rect.Center.X, rect.Center.Y));
+                        if (dsq < bestSq) { bestSq = dsq; best = cand; }
+                    }
+                }
+                if (best != null) return best;
+            }
+
+            return null;
         }
 
-        private void OnObjectListChanged(object? sender, ObjectListChangedEventArgs e)
+        // Небольшой локальный помощник (копия логики из Manager, чтобы не менять модификаторы доступа)
+        private static bool SegmentIntersectsRect(Rectangle r, Vector2 a, Vector2 b)
         {
-            if (_pendingBeaconCount <= 0 || _pendingBeaconSize <= 0 || string.IsNullOrEmpty(_pendingBeaconOwner))
-                return;
+            if (r.Contains((int)a.X, (int)a.Y) || r.Contains((int)b.X, (int)b.Y)) return true;
 
-            if (e.Location is not Farm) return;
-
-            // Помечаем новые факелы как наши маяки (в точном количестве)
-            foreach (var pair in e.Added)
+            static bool Intersects(Vector2 p1, Vector2 p2, Vector2 q1, Vector2 q2)
             {
-                if (pair.Value is SObject o && !o.bigCraftable.Value && o.ParentSheetIndex == 93 && !o.modData.ContainsKey(MD.Beacon))
-                {
-                    o.modData[MD.Beacon] = "1";
-                    o.modData[MD.BeaconOwner] = _pendingBeaconOwner!;
-                    o.modData[MD.BeaconSize] = _pendingBeaconSize.ToString();
-                    if (--_pendingBeaconCount <= 0) break;
-                }
+                float o1 = MathF.Sign((p2.X - p1.X) * (q1.Y - p1.Y) - (p2.Y - p1.Y) * (q1.X - p1.X));
+                float o2 = MathF.Sign((p2.X - p1.X) * (q2.Y - p1.Y) - (p2.Y - p1.Y) * (q2.X - p1.X));
+                float o3 = MathF.Sign((q2.X - q1.X) * (p1.Y - q1.Y) - (q2.Y - q1.Y) * (p1.X - q1.X));
+                float o4 = MathF.Sign((q2.X - q1.X) * (p2.Y - q1.Y) - (q2.Y - q1.Y) * (p2.X - q1.X));
+                return o1 != o2 && o3 != o4;
             }
 
-            if (_pendingBeaconCount <= 0)
-            {
-                _pendingBeaconOwner = null;
-                _pendingBeaconSize = 0;
-                _pendingBeaconCount = 0;
-            }
+            Vector2 a1 = new(r.Left, r.Top), a2 = new(r.Right, r.Top);
+            Vector2 b1 = new(r.Right, r.Top), b2 = new(r.Right, r.Bottom);
+            Vector2 c1 = new(r.Right, r.Bottom), c2 = new(r.Left, r.Bottom);
+            Vector2 d1 = new(r.Left, r.Bottom), d2 = new(r.Left, r.Top);
+
+            return Intersects(a, b, a1, a2) || Intersects(a, b, b1, b2)
+                || Intersects(a, b, c1, c2) || Intersects(a, b, d1, d2);
         }
     }
 }

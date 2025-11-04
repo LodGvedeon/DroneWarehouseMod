@@ -18,6 +18,7 @@ namespace DroneWarehouseMod.Game
 {
     internal sealed class DroneManager
     {
+        private ITranslationHelper I18n => _helper.Translation;
         private readonly IMonitor _mon;
         private readonly IModHelper _helper;
         internal readonly ModConfig _cfg;
@@ -557,53 +558,6 @@ namespace DroneWarehouseMod.Game
             return false;
         }
 
-        public bool GiveBeaconToPlayer(Building b, int size)
-        {
-            var o = (SObject)ItemRegistry.Create("(O)93", 1);
-            o.modData[MD.Beacon] = "1";
-            o.modData[MD.BeaconOwner] = EnsureGuid(b);
-            o.modData[MD.BeaconSize] = size.ToString();
-            o.Name = $"Маяк дрона {size}x{size}";
-            o.specialItem = true;
-
-            bool ok = Game1.player.addItemToInventoryBool(o);
-            if (!ok) Game1.createItemDebris(o, Game1.player.getStandingPosition(), -1);
-            return ok;
-        }
-
-        private List<(Point tile, int size, SObject obj)> FindBeaconsFor(Building b, Farm farm)
-        {
-            string owner = EnsureGuid(b);
-            var list = new List<(Point, int, SObject)>();
-            foreach (var pair in farm.objects.Pairs)
-            {
-                if (pair.Value is SObject o && o.modData.ContainsKey(MD.Beacon))
-                {
-                    if (!o.modData.TryGetValue(MD.BeaconOwner, out var own) || own != owner) continue;
-                    int size = int.TryParse(o.modData.TryGetValue(MD.BeaconSize, out var s) ? s : "0", out var z) ? z : 0;
-                    if (size > 0)
-                    {
-                        var pt = new Point((int)pair.Key.X, (int)pair.Key.Y);
-                        list.Add((pt, size, o));
-                    }
-                }
-            }
-            return list;
-        }
-
-        private static List<Point> BuildTilesFromBeacons(List<(Point tile, int size, SObject obj)> beacons)
-        {
-            var hs = new HashSet<Point>();
-            foreach (var (p, size, _) in beacons)
-            {
-                int r = size / 2;
-                for (int y = p.Y - r; y <= p.Y + r; y++)
-                    for (int x = p.X - r; x <= p.X + r; x++)
-                        hs.Add(new Point(x, y));
-            }
-            return hs.OrderBy(t => t.Y).ThenBy(t => t.X).ToList();
-        }
-
         private void CleanupRegrowFlags(Farm farm)
         {
             try
@@ -663,24 +617,34 @@ namespace DroneWarehouseMod.Game
 
         public bool TryStartFarmerFromBeacons(Building b, Farm farm, out string reason)
         {
-            var real = FindBeaconsFor(b, farm);
             var virt = GetVirtualBeaconsSnapshot(b);
-            if (real.Count == 0 && virt.Count == 0) { reason = "Нет маяков или выделенных зон."; return false; }
+            if (virt.Count == 0)
+            {
+                reason = I18n.Get("farmer.reason.noBeacons"); // теперь это «Нет выделенных зон»
+                return false;
+            }
 
-            var all = real.Select(t => (t.tile, t.size)).Concat(virt).ToList();
-            var tiles = BuildTilesFromBeaconsSimple(all);
-            if (tiles.Count == 0) { reason = "Подходящих клеток нет."; return false; }
+            var tiles = BuildTilesFromBeaconsSimple(virt);
+            if (tiles.Count == 0)
+            {
+                reason = I18n.Get("farmer.reason.noTiles");
+                return false;
+            }
 
             var chest = GetChestFor(b);
             int totalSeeds = CountSeasonSeeds(chest, farm);
             if (totalSeeds < tiles.Count)
             {
-                reason = $"Не хватает сезонных семян: нужно {tiles.Count}, в сундуке {totalSeeds}.";
+                reason = I18n.Get("farmer.reason.notEnoughSeeds", new { need = tiles.Count, have = totalSeeds });
                 return false;
             }
 
             var fd = _drones.OfType<FarmerDrone>().FirstOrDefault(d => d.Home == b);
-            if (fd == null) { reason = "Фермер‑дрон не создан."; return false; }
+            if (fd == null)
+            {
+                reason = I18n.Get("farmer.reason.noFarmer");
+                return false;
+            }
 
             if (fd.HasJob && !fd.HasPendingWork)
                 fd.SetJob("", new List<Point>());
@@ -690,12 +654,9 @@ namespace DroneWarehouseMod.Game
                 int added = fd.EnqueueTiles(tiles);
                 b.modData[MD.FarmerJob] = fd.EncodeJob();
 
-                foreach (var (p, _, _) in real)
-                    farm.objects.Remove(new Vector2(p.X, p.Y));
-                ClearVirtualBeacons(b);
-
+                ClearVirtualBeacons(b); // Физических удалений больше нет
                 farm.localSound("stoneCrack");
-                reason = $"Добавлено в очередь: {added} клеток.";
+                reason = I18n.Get("farmer.reason.addedToQueue", new { count = added });
                 return true;
             }
             else
@@ -703,12 +664,9 @@ namespace DroneWarehouseMod.Game
                 fd.SetJob("", tiles);
                 b.modData[MD.FarmerJob] = fd.EncodeJob();
 
-                foreach (var (p, _, _) in real)
-                    farm.objects.Remove(new Vector2(p.X, p.Y));
                 ClearVirtualBeacons(b);
-
                 farm.localSound("stoneCrack");
-                reason = $"Запланировано: {tiles.Count} клеток.";
+                reason = I18n.Get("farmer.reason.scheduled", new { count = tiles.Count });
                 return true;
             }
         }
@@ -731,6 +689,23 @@ namespace DroneWarehouseMod.Game
                 return o.QualifiedItemId;
             }
             return "";
+        }
+
+        public int CapacityByLevel(int level)
+        {
+            try
+            {
+                var caps = _cfg?.WarehouseCapacityByLevel;
+                if (caps is { Length: >= 1 })
+                {
+                    int idx = Math.Clamp(level - 1, 0, caps.Length - 1);
+                    // защита: неотрицательно
+                    return Math.Max(0, caps[idx]);
+                }
+            }
+            catch { }
+            // запасной вариант как раньше
+            return level >= 3 ? 9 : (level == 2 ? 6 : 3);
         }
 
         internal static void SetPetPettedToday(Pet p)

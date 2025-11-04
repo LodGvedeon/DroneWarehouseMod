@@ -20,9 +20,10 @@ namespace DroneWarehouseMod
 
         // Pathing
         public int NoFlyPadTiles   { get; set; } = 1;
-        public int LineOfSightPadPx{ get; set; } = 12;
+        public int LineOfSightPadPx { get; set; } = 12;
 
         // Capacities / charges
+        public int[] WarehouseCapacityByLevel { get; set; } = new[] { 3, 6, 9 };
         public int HarvestCapacity { get; set; } = 10;
         public int WaterMaxCharges { get; set; } = 10;
         public int PetMaxCharges   { get; set; } = 10;
