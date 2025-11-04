@@ -13,7 +13,13 @@ namespace DroneWarehouseMod.Core
         public const string CountPet     = Prefix + "Count.Pet";
 
         public const string HasFarmer    = Prefix + "HasFarmer";
-        public const string FarmerJob    = Prefix + "FarmerJob";
+        public const string FarmerJob = Prefix + "FarmerJob";
+        
+        // Несколько фермеров
+        public const string FarmerCount  = Prefix + "Farmer.Count";  // "0".."3"
+        public const string FarmerJob0   = Prefix + "FarmerJob.0";
+        public const string FarmerJob1   = Prefix + "FarmerJob.1";
+        public const string FarmerJob2   = Prefix + "FarmerJob.2";
 
         // День (TotalDays), когда куст был собран
         public const string BushPickedDay = Prefix + "Bush.PickedDay";

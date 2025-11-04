@@ -34,5 +34,17 @@
   "farmer.reason.noFarmer": "Farmer drone has not been created.",
   "farmer.reason.addedToQueue": "Added to queue: {{count}} tiles.",
   "farmer.reason.notEnoughSeeds": "Not enough seasonal seeds: need {{need}}, in chest {{have}}.",
-  "farmer.reason.scheduled": "Scheduled: {{count}} tiles."
+  "farmer.reason.scheduled": "Scheduled: {{count}} tiles.",
+
+  "ui.createFarmer.count": "Add Farmer ({{next}}/{{max}})",
+  "ui.beacon.label.withCount": "Beacons {{size}} (farmers: {{count}})",
+
+  "farmer.reason.scheduled.split": "Scheduled: {{total}} tiles for {{workers}} farmer(s).",
+
+  "overlay.farmers.title": "Farmers' queues: {{count}}",
+  "overlay.farmer.block": "Farmer {{idx}}",
+  "overlay.progress": "{{done}}/{{total}} planted",
+  "overlay.queue.empty": "Queue is empty",
+  "overlay.empty": "No data",
+  "overlay.hint.close": "F3 — close"
 }

@@ -34,5 +34,17 @@
   "farmer.reason.noFarmer": "Drone agricultor no ha sido creado.",
   "farmer.reason.addedToQueue": "Añadido a la cola: {{count}} Azulejos.",
   "farmer.reason.notEnoughSeeds": "No hay suficientes semillas de temporada: se necesitan {{need}}, en el cofre {{have}}.",
-  "farmer.reason.scheduled": "Programado: {{count}} Azulejos."
+  "farmer.reason.scheduled": "Programado: {{count}} Azulejos.",
+
+  "ui.createFarmer.count": "Añadir granjero ({{next}}/{{max}})",
+  "ui.beacon.label.withCount": "Balizas {{size}} (granjeros: {{count}})",
+
+  "farmer.reason.scheduled.split": "Planificado: {{total}} casillas para {{workers}} granjero(s).",
+
+  "overlay.farmers.title": "Colas de granjeros: {{count}}",
+  "overlay.farmer.block": "Granjero {{idx}}",
+  "overlay.progress": "{{done}}/{{total}} plantadas",
+  "overlay.queue.empty": "Cola vacía",
+  "overlay.empty": "Sin datos",
+  "overlay.hint.close": "F3 — cerrar"
 }

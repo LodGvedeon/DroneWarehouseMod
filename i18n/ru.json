@@ -34,5 +34,17 @@
   "farmer.reason.noFarmer": "Дрон-фермер не создан.",
   "farmer.reason.addedToQueue": "Добавлено в очередь: {{count}} клеток.",
   "farmer.reason.notEnoughSeeds": "Не хватает сезонных семян: нужно {{need}}, в сундуке {{have}}.",
-  "farmer.reason.scheduled": "Запланировано: {{count}} клеток."
+  "farmer.reason.scheduled": "Запланировано: {{count}} клеток.",
+
+  "ui.createFarmer.count": "Добавить фермера ({{next}}/{{max}})",
+  "ui.beacon.label.withCount": "Маяки {{size}} (фермеров: {{count}})",
+
+  "farmer.reason.scheduled.split": "Запланировано: {{total}} тайлов на {{workers}} фермер(ов).",
+
+  "overlay.farmers.title": "Очереди фермеров: {{count}}",
+  "overlay.farmer.block": "Фермер {{idx}}",
+  "overlay.progress": "{{done}}/{{total}} посажено",
+  "overlay.queue.empty": "Очередь пуста",
+  "overlay.empty": "Нет данных",
+  "overlay.hint.close": "F3 — закрыть"
 }

@@ -39,6 +39,7 @@ namespace DroneWarehouseMod
         // Менеджер / выделение зон
         private DroneManager _manager = null!;
         private Building? _selectionOwner;
+        private FarmerQueuesOverlay? _farmerOverlay;
 
         private int _deferredRebuildTicks = 0;
 
@@ -116,6 +117,7 @@ namespace DroneWarehouseMod
             helper.Events.GameLoop.TimeChanged += this.OnTimeChanged;
             helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
             helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
+            helper.Events.Display.RenderedHud   += this.OnRenderedHud;
             helper.Events.GameLoop.Saving += this.OnSaving;
             helper.Events.World.BuildingListChanged += this.OnBuildingListChanged;
 
@@ -193,6 +195,11 @@ namespace DroneWarehouseMod
             }
         }
 
+        private void OnRenderedHud(object? sender, RenderedHudEventArgs e)
+        {
+            _farmerOverlay?.Draw(e.SpriteBatch);
+        }
+
         private void OnDayStarted(object? sender, DayStartedEventArgs e)
         {
             DataCache.Refresh();
@@ -214,7 +221,10 @@ namespace DroneWarehouseMod
             {
                 _manager?.RebuildDryList(farm);
                 if (e.NewTime % 100 == 0)
+                {
                     _manager?.RefreshPetReservations(farm);
+                    _manager?.TrimAllFarmerQueues(farm);   // ← новое: почистить завершённые пункты
+                }
             }
         }
 
@@ -314,6 +324,45 @@ namespace DroneWarehouseMod
         {
             if (!Context.IsWorldReady) return;
 
+            // NEW: F3 — оверлей очередей фермеров
+            if (e.Button == SButton.F3)
+            {
+                if (_farmerOverlay != null)
+                {
+                    _farmerOverlay = null; // выключить
+                    Game1.playSound("bigDeSelect");
+                }
+                else
+                {
+                    var farmF3 = Game1.getFarm();
+                    var wh = PickWarehouseForOverlay(farmF3);
+                    if (wh == null)
+                    {
+                        farmF3?.localSound("cancel");
+                        Game1.addHUDMessage(new HUDMessage(I18n.Get("hud.noWarehouse"), HUDMessage.error_type));
+                    }
+                    else
+                    {
+                        int cnt = 0;
+                        if (wh.modData.TryGetValue(MD.FarmerCount, out var s)) int.TryParse(s, out cnt);
+                        else if (wh.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1") cnt = 1;
+                        cnt = Math.Clamp(cnt, 0, 3);
+                        if (cnt <= 0)
+                        {
+                            farmF3?.localSound("cancel");
+                            Game1.addHUDMessage(new HUDMessage(I18n.Get("hud.noFarmer"), HUDMessage.error_type));
+                        }
+                        else
+                        {
+                            _farmerOverlay = new FarmerQueuesOverlay(this.Helper, this.Monitor, _manager, wh);
+                            Game1.playSound("smallSelect");
+                        }
+                    }
+                }
+                this.Helper.Input.Suppress(e.Button);
+                return;
+            }
+
             // Глобальный хоткей выбора зон
             if (e.Button == SButton.F6 && Game1.currentLocation is Farm farmF6)
             {
@@ -334,12 +383,34 @@ namespace DroneWarehouseMod
             HandleWarehouseInteraction(farm, Game1.player.GetGrabTile(), e);
         }
 
+        private Building? PickWarehouseForOverlay(Farm farm)
+        {
+            static bool IsWh(Building? b) => b != null && b.buildingType?.Value == "DroneWarehouse";
+            var underGrab = farm.getBuildingAt(Game1.player.GetGrabTile());
+            bool HasFarmers(Building b)
+            {
+                if (b.modData.TryGetValue(MD.FarmerCount, out var s) && int.TryParse(s, out var n)) return n > 0;
+                return b.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1";
+            }
+            if (IsWh(underGrab) && HasFarmers(underGrab)) return underGrab;
+
+            var list = farm.buildings.Where(IsWh).Where(HasFarmers).ToList();
+            if (list.Count == 0) return null;
+
+            Vector2 me = Game1.player.Tile;
+            float Dist(Building b)
+            {
+                float cx = b.tileX.Value + b.tilesWide.Value / 2f;
+                float cy = b.tileY.Value + b.tilesHigh.Value / 2f;
+                return Vector2.Distance(me, new Vector2(cx, cy));
+            }
+            return list.OrderBy(Dist).First();
+        }
+
         private void HandleGlobalHotkeyF6(Farm farmF6, ButtonPressedEventArgs e)
         {
             if (e.Button == SButton.F6 && Game1.currentLocation is Farm _)
             {
-                const string KeyHasFarmer = MD.HasFarmer;
-
                 Building? PickWarehouseForF6(Farm farm)
                 {
                     var underGrab = farm.getBuildingAt(Game1.player.GetGrabTile());
@@ -375,7 +446,10 @@ namespace DroneWarehouseMod
                     return;
                 }
 
-                bool hasFarmer = wh.modData.TryGetValue(KeyHasFarmer, out var hf) && hf == "1";
+                int farmerCountF6 = 0;
+                if (wh.modData.TryGetValue(MD.FarmerCount, out var sCntF6)) int.TryParse(sCntF6, out farmerCountF6);
+                else if (wh.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1") farmerCountF6 = 1;
+                bool hasFarmer = farmerCountF6 > 0;
                 if (!hasFarmer)
                 {
                     farmF6.localSound("cancel");

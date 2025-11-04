@@ -26,6 +26,8 @@ namespace DroneWarehouseMod.Game.Drones
 
         public bool HasPendingWork => _index < _tiles.Count;
         public bool HasJob => _tiles.Count > 0;
+        public (int done, int total) GetProgress() => (_index, _tiles.Count);
+        public int PendingCount => Math.Max(0, _tiles.Count - _index);
         private bool _tilledPhaseDone = false;
 
         // NEW: наборы удобрений по приоритету
@@ -33,10 +35,12 @@ namespace DroneWarehouseMod.Game.Drones
             private static readonly string[] SpeedFerts   = { "(O)918", "(O)466", "(O)465" }; // Hyper, Deluxe, Regular
             private static readonly string[] RetainFerts  = { "(O)920", "(O)371", "(O)370" }; // Deluxe, Quality, Basic
 
-        public FarmerDrone(Building home, DroneAnimSet anim, float speed, int plantSeconds, int clearSeconds)
+        public int Slot { get; }
+        public FarmerDrone(Building home, DroneAnimSet anim, float speed, int plantSeconds, int clearSeconds, int slot)
             : base(home, anim)
-        {
-            _speed          = Math.Max(0.1f, speed);
+        {  
+            Slot            = Math.Clamp(slot, 0, 2);
+            _speed = Math.Max(0.1f, speed);
             _workPlantTicks = Math.Max(1, plantSeconds * TICKS_PER_SECOND);
             _workClearTicks = Math.Max(1, clearSeconds * TICKS_PER_SECOND);
         }
@@ -214,6 +218,17 @@ namespace DroneWarehouseMod.Game.Drones
             }
 
             return false;
+        }
+
+        public int TrimCompleted()
+        {
+            // удаляем всё, что уже пройдено, и начинаем с нуля относительно текущего хвоста
+            if (_index <= 0) return 0;
+            int removed = Math.Min(_index, _tiles.Count);
+            if (removed > 0)
+                _tiles.RemoveRange(0, removed);
+            _index = 0;
+            return removed;
         }
 
         private static string Unqualify(string qid)

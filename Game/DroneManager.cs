@@ -81,6 +81,8 @@ namespace DroneWarehouseMod.Game
         public int SelectionSize => _selSize;
         public Building? SelectionBuilding => _selBuilding;
 
+        private const int MAX_FARMERS = 3;
+
         // Сетка no‑fly
         private readonly HashSet<Point> _noFly = new();
         private static int NOFLY_PAD_TILES = 1;
@@ -124,6 +126,14 @@ namespace DroneWarehouseMod.Game
             foreach (var k in _petReserved.Where(kv => ReferenceEquals(kv.Value, d)).Select(kv => kv.Key).ToList())
                 _petReserved.Remove(k);
         }
+
+        internal List<FarmerDrone> GetFarmers(Building b)
+            => _drones.Where(d => d.Home == b && d is FarmerDrone)
+                .Cast<FarmerDrone>()
+                .OrderBy(fd => fd.Slot)
+                .ToList();
+
+        private static int ParseInt(string v) => int.TryParse(v, out var n) ? n : 0;
 
         private static int CountSeasonSeeds(Chest chest, GameLocation loc)
         {
@@ -221,6 +231,152 @@ namespace DroneWarehouseMod.Game
                         hs.Add(new Point(x, y));
             }
             return hs.OrderBy(t => t.Y).ThenBy(t => t.X).ToList();
+        }
+
+        private static List<Point> SortTilesHilbert(List<Point> tiles)
+        {
+            if (tiles == null || tiles.Count == 0) return tiles ?? new List<Point>();
+            int minX = tiles.Min(t => t.X), minY = tiles.Min(t => t.Y);
+            int maxX = tiles.Max(t => t.X), maxY = tiles.Max(t => t.Y);
+            int w = Math.Max(1, maxX - minX + 1);
+            int h = Math.Max(1, maxY - minY + 1);
+            int n = NextPow2(Math.Max(w, h)); // 2^k
+            return tiles.OrderBy(p => HilbertXYToIndex(n, p.X - minX, p.Y - minY)).ToList();
+        }
+        private static int NextPow2(int v) { int n = 1; while (n < v) n <<= 1; return n; }
+
+        // Классический xy→d (см. вики Hilbert curve): n — степень двойки (сторона), 0<=x,y<n
+        private static int HilbertXYToIndex(int n, int x, int y)
+        {
+            int d = 0;
+            for (int s = n / 2; s > 0; s /= 2)
+            {
+                int rx = ((x & s) != 0) ? 1 : 0;
+                int ry = ((y & s) != 0) ? 1 : 0;
+                d += s * s * ((3 * rx) ^ ry);
+                // rot
+                if (ry == 0)
+                {
+                    if (rx == 1) { x = n - 1 - x; y = n - 1 - y; }
+                    // swap
+                    int t = x; x = y; y = t;
+                }
+            }
+            return d;
+        }
+
+        private static List<List<Point>> ClusterTilesKMeans(List<Point> tiles, int k, int iters = 5)
+        {
+            k = Math.Clamp(k, 1, Math.Min(3, Math.Max(1, tiles.Count)));
+            var centers = new List<Vector2>();
+
+            // farthest-first инициализация
+            centers.Add(new Vector2(tiles[0].X, tiles[0].Y));
+            for (int c = 1; c < k; c++)
+            {
+                Point best = tiles[0]; double bestMin = -1;
+                foreach (var t in tiles)
+                {
+                    double min = centers.Min(ct => Vector2.Distance(ct, new Vector2(t.X, t.Y)));
+                    if (min > bestMin) { bestMin = min; best = t; }
+                }
+                centers.Add(new Vector2(best.X, best.Y));
+            }
+
+            var groups = new List<List<Point>>(k);
+            for (int i = 0; i < k; i++) groups.Add(new List<Point>());
+
+            for (int it = 0; it < iters; it++)
+            {
+                foreach (var g in groups) g.Clear();
+                foreach (var t in tiles)
+                {
+                    int bestI = 0; double bestD = double.MaxValue;
+                    for (int i = 0; i < centers.Count; i++)
+                    {
+                        double d = Vector2.Distance(centers[i], new Vector2(t.X, t.Y));
+                        if (d < bestD) { bestD = d; bestI = i; }
+                    }
+                    groups[bestI].Add(t);
+                }
+                for (int i = 0; i < centers.Count; i++)
+                {
+                    if (groups[i].Count == 0) continue;
+                    float cx = (float)groups[i].Average(p => p.X);
+                    float cy = (float)groups[i].Average(p => p.Y);
+                    centers[i] = new Vector2(cx, cy);
+                }
+            }
+
+            // убрать пустые
+            groups = groups.Where(g => g.Count > 0).ToList();
+
+            // упорядочить внутри каждого кластера
+            for (int i = 0; i < groups.Count; i++)
+                groups[i] = SortTilesHilbert(groups[i]);
+
+            return groups;
+        }
+
+        // Сопоставление кластеров фермерам: жадно по минимальной «стоимости»
+        // cost = dist_in_tiles + 4 * pendingCount. Излишки кластеров — тоже жадно.
+        private static Dictionary<FarmerDrone, List<Point>> AssignClustersToFarmers(List<FarmerDrone> farmers, List<List<Point>> clusters)
+        {
+            var result = farmers.ToDictionary(fd => fd, _ => new List<Point>());
+            if (clusters.Count == 0) return result;
+
+            var freeF = new HashSet<int>(Enumerable.Range(0, farmers.Count));
+            var freeC = new HashSet<int>(Enumerable.Range(0, clusters.Count));
+
+            const float W_LOAD = 4f;
+
+            (double cost, int fi, int ci) BestPair()
+            {
+                double best = double.MaxValue; int bfi = -1, bci = -1;
+                foreach (int fi in freeF)
+                foreach (int ci in freeC)
+                {
+                    var fd = farmers[fi];
+                    var cl = clusters[ci];
+                    // центр кластера
+                    float cx = (float)cl.Average(p => p.X) * Game1.tileSize + Game1.tileSize / 2f;
+                    float cy = (float)cl.Average(p => p.Y) * Game1.tileSize + Game1.tileSize / 2f;
+                    float distTiles = Vector2.Distance(fd.Position, new Vector2(cx, cy)) / Game1.tileSize;
+                    double cost = distTiles + W_LOAD * Math.Max(0, fd.PendingCount);
+                    if (cost < best) { best = cost; bfi = fi; bci = ci; }
+                }
+                return (best, bfi, bci);
+            }
+
+            // 1) пока есть свободные фермеры — выдаём по одному кластеру
+            while (freeF.Count > 0 && freeC.Count > 0)
+            {
+                var (_, fi, ci) = BestPair();
+                if (fi < 0 || ci < 0) break;
+                result[farmers[fi]].AddRange(clusters[ci]);
+                freeF.Remove(fi); freeC.Remove(ci);
+            }
+
+            // 2) оставшиеся кластеры (если их больше, чем фермеров) — жадно к ближайшему/наименее загруженному
+            foreach (int ci in freeC.ToList())
+            {
+                int bestFi = 0; double best = double.MaxValue;
+                for (int fi = 0; fi < farmers.Count; fi++)
+                {
+                    var fd = farmers[fi];
+                    var cl = clusters[ci];
+                    float cx = (float)cl.Average(p => p.X) * Game1.tileSize + Game1.tileSize / 2f;
+                    float cy = (float)cl.Average(p => p.Y) * Game1.tileSize + Game1.tileSize / 2f;
+                    float distTiles = Vector2.Distance(fd.Position, new Vector2(cx, cy)) / Game1.tileSize;
+                    // учитываем уже назначенные в result
+                    int extra = result[fd].Count;
+                    double cost = distTiles + W_LOAD * (fd.PendingCount + extra);
+                    if (cost < best) { best = cost; bestFi = fi; }
+                }
+                result[farmers[bestFi]].AddRange(clusters[ci]);
+            }
+
+            return result;
         }
 
         public void RebuildNoFly(Farm farm)
@@ -615,21 +771,22 @@ namespace DroneWarehouseMod.Game
             catch { /* тихо */ }
         }
 
+        public void TrimAllFarmerQueues(Farm farm)
+        {
+            int removed = 0;
+            foreach (var fd in _drones.OfType<FarmerDrone>())
+                removed += fd.TrimCompleted();
+            if (removed > 0)
+                PersistFarmerJobs(farm);
+        }
+
         public bool TryStartFarmerFromBeacons(Building b, Farm farm, out string reason)
         {
             var virt = GetVirtualBeaconsSnapshot(b);
-            if (virt.Count == 0)
-            {
-                reason = I18n.Get("farmer.reason.noBeacons"); // теперь это «Нет выделенных зон»
-                return false;
-            }
+            if (virt.Count == 0) { reason = I18n.Get("farmer.reason.noBeacons"); return false; }
 
             var tiles = BuildTilesFromBeaconsSimple(virt);
-            if (tiles.Count == 0)
-            {
-                reason = I18n.Get("farmer.reason.noTiles");
-                return false;
-            }
+            if (tiles.Count == 0) { reason = I18n.Get("farmer.reason.noTiles"); return false; }
 
             var chest = GetChestFor(b);
             int totalSeeds = CountSeasonSeeds(chest, farm);
@@ -639,36 +796,51 @@ namespace DroneWarehouseMod.Game
                 return false;
             }
 
-            var fd = _drones.OfType<FarmerDrone>().FirstOrDefault(d => d.Home == b);
-            if (fd == null)
+            var farmers = GetFarmers(b);
+            if (farmers.Count == 0) { reason = I18n.Get("farmer.reason.noFarmer"); return false; }
+
+            // 0) Подчищаем завершённое, чтобы нагрузка считалась честно
+            foreach (var fd in farmers) fd.TrimCompleted();
+
+            // 1) Если есть драматичный перекос нагрузок — отдать всё самому «пустому»
+            var loads = farmers.Select(fd => fd.PendingCount).ToArray();
+            int minLoad = loads.Min();
+            int maxLoad = loads.Max();
+            bool hugeImbalance = (minLoad == 0) ? (maxLoad >= 10) : (maxLoad / (float)minLoad >= 10f);
+            if (hugeImbalance)
             {
-                reason = I18n.Get("farmer.reason.noFarmer");
-                return false;
-            }
-
-            if (fd.HasJob && !fd.HasPendingWork)
-                fd.SetJob("", new List<Point>());
-
-            if (fd.HasJob)
-            {
-                int added = fd.EnqueueTiles(tiles);
-                b.modData[MD.FarmerJob] = fd.EncodeJob();
-
-                ClearVirtualBeacons(b); // Физических удалений больше нет
-                farm.localSound("stoneCrack");
-                reason = I18n.Get("farmer.reason.addedToQueue", new { count = added });
-                return true;
-            }
-            else
-            {
-                fd.SetJob("", tiles);
-                b.modData[MD.FarmerJob] = fd.EncodeJob();
-
+                int idxMin = Array.IndexOf(loads, minLoad);
+                farmers[idxMin].EnqueueTiles(tiles);
+                PersistFarmerJobs(farm);
                 ClearVirtualBeacons(b);
                 farm.localSound("stoneCrack");
-                reason = I18n.Get("farmer.reason.scheduled", new { count = tiles.Count });
+                reason = I18n.Get("farmer.reason.scheduled.split", new { total = tiles.Count, workers = farmers.Count });
                 return true;
             }
+
+            // 2) Кластеризация выбранных тайлов по количеству фермеров
+            int k = Math.Clamp(farmers.Count, 1, tiles.Count);
+            var clusters = ClusterTilesKMeans(tiles, k);              // см. хелпер ниже (k-means с farthest-first)
+            if (clusters.Count == 0) { reason = I18n.Get("farmer.reason.noTiles"); return false; }
+
+            // 3) Сопоставление «кластер → фермер» с учётом расстояния и текущей очереди
+            var mapping = AssignClustersToFarmers(farmers, clusters); // см. хелпер ниже
+
+            // 4) Выдать работу
+            int totalScheduled = 0;
+            foreach (var (fd, chunk) in mapping)
+            {
+                if (chunk.Count == 0) continue;
+                if (fd.HasJob) totalScheduled += fd.EnqueueTiles(chunk);
+                else { fd.SetJob("", chunk); totalScheduled += chunk.Count; }
+            }
+
+            // 5) Сохранить/очистить
+            PersistFarmerJobs(farm);
+            ClearVirtualBeacons(b);
+            farm.localSound("stoneCrack");
+            reason = I18n.Get("farmer.reason.scheduled.split", new { total = tiles.Count, workers = farmers.Count });
+            return true;
         }
 
         internal static string PickFirstSeasonSeedFromChest(Chest chest, GameLocation loc)
@@ -892,10 +1064,13 @@ namespace DroneWarehouseMod.Game
                     bool farmerWork = _drones.Any(d => d.Home == b && d is FarmerDrone fd && fd.HasPendingWork);
 
                     DroneBase? candidate =
-                        _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is WaterDrone && waterWork > 0)
+                        _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is WaterDrone   && waterWork   > 0)
                     ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is HarvestDrone && harvestWork > 0)
-                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is PetDrone && petWork > 0)
-                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is FarmerDrone && farmerWork);
+                    ?? _drones.FirstOrDefault(d => d.Home == b && d.IsDocked && d is PetDrone     && petWork     > 0)
+                    ?? _drones
+                            .Where(d => d.Home == b && d.IsDocked && d is FarmerDrone fd && fd.HasPendingWork)
+                            .OrderByDescending(d => ((FarmerDrone)d).PendingCount) // опционально: сначала с самой длинной очередью
+                            .FirstOrDefault();
 
                     if (candidate == null)
                         continue;
@@ -1008,9 +1183,18 @@ namespace DroneWarehouseMod.Game
             foreach (var b in farm.buildings)
             {
                 if (b.buildingType.Value != "DroneWarehouse") continue;
-                var fd = _drones.FirstOrDefault(d => d.Home == b && d is FarmerDrone) as FarmerDrone;
-                if (fd != null && fd.HasJob) b.modData[MD.FarmerJob] = fd.EncodeJob();
-                else b.modData.Remove(MD.FarmerJob);
+                var farmers = GetFarmers(b);
+                // чистим все ключи
+                b.modData.Remove(MD.FarmerJob);
+                b.modData.Remove(MD.FarmerJob0);
+                b.modData.Remove(MD.FarmerJob1);
+                b.modData.Remove(MD.FarmerJob2);
+                for (int slot = 0; slot < farmers.Count; slot++)
+                {
+                    string key = slot switch { 0 => MD.FarmerJob0, 1 => MD.FarmerJob1, 2 => MD.FarmerJob2, _ => "" };
+                    if (!string.IsNullOrEmpty(key) && farmers[slot].HasJob)
+                        b.modData[key] = farmers[slot].EncodeJob();
+                }
             }
         }
 
@@ -1227,19 +1411,35 @@ namespace DroneWarehouseMod.Game
                         ScrapDrone(list[k]);
                 }
 
-                bool wantFarmer = b.modData.TryGetValue(MD.HasFarmer, out var wf) && wf == "1";
-                bool haveFarmer = have.Any(d => d is FarmerDrone);
-                if (wantFarmer && !haveFarmer)
+                int wantFarmers = ParseInt(
+                    b.modData.TryGetValue(MD.FarmerCount, out var sCnt) ? sCnt
+                    : (b.modData.TryGetValue(MD.HasFarmer, out var wf) && wf == "1") ? "1" : "0"
+                );
+                wantFarmers = Math.Clamp(wantFarmers, 0, MAX_FARMERS);
+
+                var haveFarmers = have.Where(d => d is FarmerDrone).Cast<FarmerDrone>().OrderBy(fd => fd.Slot).ToList();
+
+                // удалить лишних (с конца)var fd = _drones.FirstOrDefault(d => d.Home == b && d is 
+                for (int i = haveFarmers.Count - 1; i >= wantFarmers; i--)
+                    ScrapDrone(haveFarmers[i]);
+
+                // добрать недостающих
+                haveFarmers = have.Where(d => d is FarmerDrone).Cast<FarmerDrone>().OrderBy(fd => fd.Slot).ToList();
+                for (int slot = haveFarmers.Count; slot < wantFarmers; slot++)
                 {
-                    var fd = new FarmerDrone(b, _farmerAnim, _cfg.FarmerSpeed, _cfg.FarmerWorkSeconds, _cfg.FarmerClearSeconds);
+                    var fd = new FarmerDrone(b, _farmerAnim, _cfg.FarmerSpeed, _cfg.FarmerWorkSeconds, _cfg.FarmerClearSeconds, slot);
                     _drones.Add(fd);
-                    if (b.modData.TryGetValue(MD.FarmerJob, out var data) && !string.IsNullOrEmpty(data))
-                        fd.DecodeJob(data);
                 }
-                else if (!wantFarmer && haveFarmer)
+
+                // восстановить очереди для каждого слота
+                haveFarmers = GetFarmers(b);
+                for (int slot = 0; slot < haveFarmers.Count; slot++)
                 {
-                    foreach (var d in have.Where(d => d is FarmerDrone).ToList())
-                        ScrapDrone(d);
+                    string key = slot switch { 0 => MD.FarmerJob0, 1 => MD.FarmerJob1, 2 => MD.FarmerJob2, _ => "" };
+                    if (!string.IsNullOrEmpty(key) && b.modData.TryGetValue(key, out var data) && !string.IsNullOrEmpty(data))
+                        haveFarmers[slot].DecodeJob(data);
+                    else if (slot == 0 && b.modData.TryGetValue(MD.FarmerJob, out var legacy) && !string.IsNullOrEmpty(legacy))
+                       haveFarmers[0].DecodeJob(legacy); // fallback со старого сейва
                 }
             }
 

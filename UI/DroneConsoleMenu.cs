@@ -1,12 +1,14 @@
 // UI/DroneConsoleMenu.cs
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
 using StardewValley;
-using StardewValley.Menus;
 using StardewValley.Buildings;
-using DroneWarehouseMod.Game.Drones;
+using StardewValley.Menus;
 using DroneWarehouseMod.Game;
+using DroneWarehouseMod.Game.Drones;
 using MD = DroneWarehouseMod.Core.ModDataKeys;
 using SObject = StardewValley.Object;
 
@@ -27,28 +29,31 @@ namespace DroneWarehouseMod.UI
         private readonly Texture2D _iconFarmer;
         private readonly Texture2D? _texFrame, _texButton, _texScreen, _ledGreen, _ledRed;
 
-        // Кнопки
+        // Кнопки (верхняя панель)
         private Rectangle _btnUpgrade;
+        private Rectangle _btnCreateFarmer;
+        private Rectangle _btnOpenOverlay;
+
+        private readonly Rectangle[] _icoFarmers = new Rectangle[3];
+        private bool _hoverFarmerIcons;
+
+        // Кнопки «Разобрать»
         private Rectangle _btnScrapHarvest, _btnScrapWater, _btnScrapPet;
+
+        // Кнопки «Создать»
         private Rectangle _btnCreateHarvest, _btnCreateWater, _btnCreatePet;
 
-        private bool _hoverUpgrade, _hoverScrapH, _hoverScrapW, _hoverScrapP;
+        // Hover‑состояния
+        private bool _hoverUpgrade;
+        private bool _hoverCreateFarmer, _hoverOpenOverlay;
+        private bool _hoverScrapH, _hoverScrapW, _hoverScrapP;
         private bool _hoverCreateH, _hoverCreateW, _hoverCreateP;
-
-        private Rectangle _btnCreateFarmer;
-        private Rectangle _btnBeaconSelect;
-        private Rectangle _btnBeaconCreate;
-        private bool _hoverCreateFarmer, _hoverBeaconSelect, _hoverBeaconCreate;
-
-        private static readonly int[] BEACON_SIZES = new[] { 3, 5, 7 };
-        private int _beaconIndex = 0;
 
         private const int LedSize = 16;
         private const int GOLD = -999;
 
         private static readonly Color TxtMain   = new Color(168, 255, 138);
         private static readonly Color TxtShadow = new Color(28, 58, 28);
-
 
         // Стоимость апгрейдов
         private static readonly Dictionary<int, int> COST_1_TO_2 = new()
@@ -137,36 +142,38 @@ namespace DroneWarehouseMod.UI
             yPositionOnScreen = (Game1.uiViewport.Height - height) / 2;
 
             // Верхняя панель
-            _btnUpgrade = new Rectangle(xPositionOnScreen + 24, yPositionOnScreen + 58, 260, 78);
+            _btnUpgrade      = new Rectangle(xPositionOnScreen + 24, yPositionOnScreen + 58, 260, 78);
             _btnCreateFarmer = new Rectangle(xPositionOnScreen + 24, yPositionOnScreen + 48, 320, 110);
 
-            // Ряд управления маяками
-            int rowWidth = 150 + 10 + 120;
+            // Кнопка запуска оверлея "ВЫДЕЛИТЬ" — справа
             int safeRight = xPositionOnScreen + width - 24;
-            int topRowX = Math.Min(_btnCreateFarmer.Right + 12, safeRight - rowWidth);
-            int topRowY = _btnCreateFarmer.Y + 12;
-            _btnBeaconSelect = new Rectangle(topRowX, topRowY, 150, 42);
-            _btnBeaconCreate = new Rectangle(_btnBeaconSelect.Right + 10, topRowY, 120, 42);
+            _btnOpenOverlay = new Rectangle(safeRight - 180, _btnCreateFarmer.Y + 34, 180, 80);
+
+            int ico = 48, shift = 14;
+            int icoY = _btnCreateFarmer.Y + (_btnCreateFarmer.Height - ico) / 2;
+            int icoX = _btnCreateFarmer.X + 12;
+            for (int i = 0; i < 3; i++)
+                _icoFarmers[i] = new Rectangle(icoX + i * (ico + shift), icoY, ico, ico);
 
             // Разборка
             int rightColX = xPositionOnScreen + width - 250;
             int rowY = yPositionOnScreen + 150;
             _btnScrapHarvest = new Rectangle(rightColX + 0, rowY + 24, 68, 68);
-            _btnScrapWater = new Rectangle(_btnScrapHarvest.Right + 10, rowY + 24, 68, 68);
-            _btnScrapPet = new Rectangle(_btnScrapWater.Right + 10, rowY + 24, 68, 68);
+            _btnScrapWater   = new Rectangle(_btnScrapHarvest.Right + 10, rowY + 24, 68, 68);
+            _btnScrapPet     = new Rectangle(_btnScrapWater.Right + 10, rowY + 24, 68, 68);
 
             // Создание
             int createY = yPositionOnScreen + height - 140;
             _btnCreateHarvest = new Rectangle(xPositionOnScreen + 24, createY, 220, 70);
-            _btnCreateWater = new Rectangle(_btnCreateHarvest.Right + 22, createY, 220, 70);
-            _btnCreatePet = new Rectangle(_btnCreateWater.Right + 22, createY, 220, 70);
+            _btnCreateWater   = new Rectangle(_btnCreateHarvest.Right + 22, createY, 220, 70);
+            _btnCreatePet     = new Rectangle(_btnCreateWater.Right + 22, createY, 220, 70);
 
             // Значения по умолчанию в modData
             if (!_building.modData.ContainsKey(MD.HasFarmer)) _building.modData[MD.HasFarmer] = "0";
             var md = _building.modData;
             if (!md.ContainsKey(MD.Level)) md[MD.Level] = "1";
             if (!md.ContainsKey(MD.CountHarvest)) md[MD.CountHarvest] = "0";
-            if (!md.ContainsKey(MD.CountWater)) md[MD.CountWater] = "0";
+            if (!md.ContainsKey(MD.CountWater))  md[MD.CountWater]  = "0";
             if (!md.ContainsKey(MD.CountPet))
             {
                 if (md.TryGetValue("Jenya.DroneWarehouseMod/Count.Iron", out var old))
@@ -180,21 +187,28 @@ namespace DroneWarehouseMod.UI
         {
             int level = int.TryParse(_building.modData.TryGetValue(MD.Level, out var sLvl) ? sLvl : "1", out var lv) ? lv : 1;
             bool atMaxLevel = level >= 3;
-            bool hasFarmer = _building.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1";
+            int farmerCount = 0;
+            if (_building.modData.TryGetValue(MD.FarmerCount, out var sCnt)) int.TryParse(sCnt, out farmerCount);
+            else if (_building.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1") farmerCount = 1; // legacy
+            farmerCount = Math.Clamp(farmerCount, 0, 3);
+            bool hasFarmers = farmerCount > 0;
+            bool canCreateFarmer = atMaxLevel && farmerCount < 3;
 
             _hoverUpgrade      = !atMaxLevel && _btnUpgrade.Contains(x, y);
+            _hoverCreateFarmer =  canCreateFarmer && _btnCreateFarmer.Contains(x, y);
+            _hoverOpenOverlay  =  atMaxLevel &&  hasFarmers && _btnOpenOverlay.Contains(x, y);
 
-            _hoverScrapH       = _btnScrapHarvest.Contains(x, y);
-            _hoverScrapW       = _btnScrapWater.Contains(x, y);
-            _hoverScrapP       = _btnScrapPet.Contains(x, y);
+            _hoverScrapH = _btnScrapHarvest.Contains(x, y);
+            _hoverScrapW = _btnScrapWater.Contains(x, y);
+            _hoverScrapP = _btnScrapPet.Contains(x, y);
 
-            _hoverCreateH      = _btnCreateHarvest.Contains(x, y);
-            _hoverCreateW      = _btnCreateWater.Contains(x, y);
-            _hoverCreateP      = _btnCreatePet.Contains(x, y);
+            _hoverCreateH = _btnCreateHarvest.Contains(x, y);
+            _hoverCreateW = _btnCreateWater.Contains(x, y);
+            _hoverCreateP = _btnCreatePet.Contains(x, y);
 
-            _hoverCreateFarmer =  atMaxLevel && !hasFarmer && _btnCreateFarmer.Contains(x, y);
-            _hoverBeaconSelect =  atMaxLevel &&  hasFarmer && _btnBeaconSelect.Contains(x, y);
-            _hoverBeaconCreate =  atMaxLevel &&  hasFarmer && _btnBeaconCreate.Contains(x, y);
+            _hoverFarmerIcons = false;
+            if (atMaxLevel && farmerCount >= 3)
+                _hoverFarmerIcons = _icoFarmers.Any(r => r.Contains(x, y));
 
             base.performHoverAction(x, y);
         }
@@ -213,6 +227,12 @@ namespace DroneWarehouseMod.UI
 
             int capacity = _manager.CapacityByLevel(level);
             bool atMaxLevel = level >= 3;
+            int farmerCount = 0;
+            if (_building.modData.TryGetValue(MD.FarmerCount, out var sCnt)) int.TryParse(sCnt, out farmerCount);
+            else if (_building.modData.TryGetValue(MD.HasFarmer, out var hf) && hf == "1") farmerCount = 1;
+            farmerCount = Math.Clamp(farmerCount, 0, 3);
+            bool hasFarmers = farmerCount > 0;
+            bool canCreateFarmer = atMaxLevel && farmerCount < 3;
             bool blockedByMax = total >= capacity;
 
             // Upgrade
@@ -306,15 +326,14 @@ namespace DroneWarehouseMod.UI
                 return;
             }
 
-            // Фермер/маяки при 3 уровне
-            bool hasFarmer = _building.modData.TryGetValue(MD.HasFarmer, out var _hf) && _hf == "1";
+            // Фермер/оверлей при 3 уровне
             if (level >= 3)
             {
-                if (!hasFarmer && _btnCreateFarmer.Contains(x, y))
+                if (canCreateFarmer && _btnCreateFarmer.Contains(x, y))
                 {
                     if (HasAllItems(Game1.player, COST_FARMER_CREATE) && TryConsumeItems(Game1.player, COST_FARMER_CREATE))
                     {
-                        _building.modData[MD.HasFarmer] = "1";
+                        _building.modData[MD.FarmerCount] = Math.Min(3, farmerCount + 1).ToString();
                         _manager.SyncWithBuildings();
                         Game1.currentLocation?.localSound("purchase");
                     }
@@ -322,23 +341,15 @@ namespace DroneWarehouseMod.UI
                     return;
                 }
 
-                if (hasFarmer)
+                // Запуск оверлея выделения (без выбора размера в меню)
+                if (hasFarmers && _btnOpenOverlay.Contains(x, y))
                 {
-                    if (_btnBeaconSelect.Contains(x, y))
-                    {
-                        _beaconIndex = (_beaconIndex + 1) % BEACON_SIZES.Length;
-                        Game1.currentLocation?.localSound("smallSelect");
-                        return;
-                    }
-                    if (_btnBeaconCreate.Contains(x, y))
-                    {
-                        int size = BEACON_SIZES[_beaconIndex];
-                        _manager.BeginBeaconSelection(_building, size);
-                        Game1.currentLocation?.localSound("smallSelect");
-                        Game1.addHUDMessage(new HUDMessage(I18n.Get("hud.selection.instructions"), HUDMessage.newQuest_type));
-                        this.exitThisMenu();
-                        return;
-                    }
+                    int startSize = _manager.SelectionSize > 0 ? _manager.SelectionSize : 3;
+                    _manager.BeginBeaconSelection(_building, startSize);
+                    Game1.currentLocation?.localSound("smallSelect");
+                    Game1.addHUDMessage(new HUDMessage(I18n.Get("hud.selection.instructions"), HUDMessage.newQuest_type));
+                    this.exitThisMenu();
+                    return;
                 }
             }
 
@@ -353,11 +364,11 @@ namespace DroneWarehouseMod.UI
 
             DrawConsoleText(b, Game1.smallFont, I18n.Get("ui.console.title"), new Vector2(xPositionOnScreen + 24, yPositionOnScreen + 16));
 
-            int level  = int.Parse(_building.modData[MD.Level]);
+            int level = int.Parse(_building.modData[MD.Level]);
             int countH = int.Parse(_building.modData[MD.CountHarvest]);
             int countW = int.Parse(_building.modData[MD.CountWater]);
             int countP = int.Parse(_building.modData[MD.CountPet]);
-            int total  = countH + countW + countP;
+            int total = countH + countW + countP;
 
             bool levelOkH = level >= 1;
             bool levelOkW = level >= 2;
@@ -366,11 +377,17 @@ namespace DroneWarehouseMod.UI
             int capacity = _manager.CapacityByLevel(level);
             bool atMaxLevel = level >= 3;
 
+            int farmerCount = 0;
+            if (_building.modData.TryGetValue(MD.FarmerCount, out var sCnt0)) int.TryParse(sCnt0, out farmerCount);
+            else if (_building.modData.TryGetValue(MD.HasFarmer, out var hf0) && hf0 == "1") farmerCount = 1;
+            farmerCount = Math.Clamp(farmerCount, 0, 3);
+            bool hasFarmers = farmerCount > 0;
+
             // Уровень
             DrawConsoleText(b, Game1.smallFont, I18n.Get("ui.level", new { level = Math.Min(level, 3) }),
                 new Vector2(xPositionOnScreen + width - 130, yPositionOnScreen + 20));
 
-            // Верхняя панель: апгрейд или фермер/маяки
+            // Верхняя панель
             if (!atMaxLevel)
             {
                 var cost = GetUpgradeCost(level);
@@ -384,20 +401,37 @@ namespace DroneWarehouseMod.UI
             }
             else
             {
-                bool hasFarmer = _building.modData.TryGetValue(MD.HasFarmer, out var _hf) && _hf == "1";
-                if (!hasFarmer)
+                // Слева — создание фермера (если меньше 3)
+                if (farmerCount < 3)
                 {
-                    DrawButton(b, _btnCreateFarmer, I18n.Get("ui.createFarmer"), _hoverCreateFarmer, icon: _iconFarmer, iconSize: 36);
+                    string label = I18n.Get("ui.createFarmer.count", new { next = Math.Min(3, farmerCount + 1), max = 3 });
+                    DrawButton(b, _btnCreateFarmer, label, _hoverCreateFarmer, icon: _iconFarmer, iconSize: 36);
+
+                    // --- адаптивный масштаб цены, чтобы не залезала на кнопку справа ---
                     int costX = _btnCreateFarmer.Right + 12;
-                    int costY = _btnCreateFarmer.Y + (_btnCreateFarmer.Height - (int)(40 * 0.60f)) / 2;
-                    DrawCostSmart(b, COST_FARMER_CREATE, costX, costY, scale: 0.60f, pad: 4);
+                    int costYBase = _btnCreateFarmer.Y;
+                    float costScale = 0.60f;
+                    int maxWidth = _btnOpenOverlay.X - 12 - costX; // сколько пикселей доступно слева от кнопки
+
+                    while (MeasureCostWidth(COST_FARMER_CREATE, costScale, pad: 4) > maxWidth && costScale > 0.45f)
+                        costScale -= 0.05f;
+
+                    // вертикально центрируем под новый масштаб
+                    int iconH = (int)(40 * costScale);
+                    int costY = costYBase + (_btnCreateFarmer.Height - iconH) / 2;
+
+                    // рисуем «цену»
+                    DrawCostSmart(b, COST_FARMER_CREATE, costX, costY, scale: costScale, pad: 4);
                 }
                 else
                 {
-                    b.Draw(_iconFarmer, new Rectangle(_btnCreateFarmer.X + 12, _btnCreateFarmer.Y + 10, 72, 72), Color.White);
-                    DrawButton(b, _btnBeaconSelect, I18n.Get("ui.beacon.label", new { size = BEACON_SIZES[_beaconIndex] }), _hoverBeaconSelect);
-                    DrawButton(b, _btnBeaconCreate, I18n.Get("ui.beacon.create"), _hoverBeaconCreate);
+                    // 3 иконки как «заглушка»
+                    foreach (var r in _icoFarmers)
+                        b.Draw(_iconFarmer, r, Color.White * (_hoverFarmerIcons ? 0.95f : 1f));
                 }
+                bool enabled = hasFarmers;
+                DrawButton(b, _btnOpenOverlay, I18n.Get("ui.beacon.create"), _hoverOpenOverlay, disabled: !enabled);
+
             }
 
             // Текущие дроны + счётчик
@@ -422,6 +456,7 @@ namespace DroneWarehouseMod.UI
 
             // Создать
             DrawConsoleText(b, Game1.smallFont, I18n.Get("ui.create.header"), new Vector2(xPositionOnScreen + 24, _btnCreateHarvest.Y - 26));
+
             bool canCreateH = levelOkH && total < capacity && HasAllItems(Game1.player, CreateCostByKind[DroneKind.Harvest]);
             bool canCreateW = levelOkW && total < capacity && HasAllItems(Game1.player, CreateCostByKind[DroneKind.Water]);
             bool canCreateP = levelOkP && total < capacity && HasAllItems(Game1.player, CreateCostByKind[DroneKind.Pet]);
@@ -442,26 +477,50 @@ namespace DroneWarehouseMod.UI
 
             // Подсказки
             string? tip = null;
-            if      (_hoverCreateH && !levelOkH) tip = I18n.Get("tooltip.requiresLevel", new { level = 1 });
+            if (_hoverCreateH && !levelOkH) tip = I18n.Get("tooltip.requiresLevel", new { level = 1 });
             else if (_hoverCreateW && !levelOkW) tip = I18n.Get("tooltip.requiresLevel", new { level = 2 });
             else if (_hoverCreateP && !levelOkP) tip = I18n.Get("tooltip.requiresLevel", new { level = 3 });
-            else if (_hoverCreateH)              tip = I18n.Get("tooltip.harvest");
-            else if (_hoverCreateW)              tip = I18n.Get("tooltip.water");
-            else if (_hoverCreateP)              tip = I18n.Get("tooltip.pet");
-            else if (_hoverCreateFarmer)         tip = I18n.Get("tooltip.farmer");
+            else if (_hoverCreateH) tip = I18n.Get("tooltip.harvest");
+            else if (_hoverCreateW) tip = I18n.Get("tooltip.water");
+            else if (_hoverCreateP) tip = I18n.Get("tooltip.pet");
+            else if (_hoverCreateFarmer) tip = I18n.Get("tooltip.farmer");
 
             if (!string.IsNullOrEmpty(tip))
                 drawHoverText(b, tip, Game1.smallFont);
 
             drawMouse(b);
 
-            // Локальная отрисовка ряда иконок
+            // локальная отрисовка ряда иконок
             void DrawIconRow(SpriteBatch sb, Texture2D icon, int n, int x, int y)
             {
                 int perRow = 20, size = 24, pad = 6;
-                for (int i = 0; i < Math.Min(n, perRow); i++)
+                for (int i = 0; i < System.Math.Min(n, perRow); i++)
                     sb.Draw(icon, new Rectangle(x + i * (size + pad), y, size, size), Color.White);
             }
+        }
+        
+        private static int MeasureCostWidth(Dictionary<int, int> cost, float scale, int pad = 6)
+        {
+            int iconSize = (int)(40 * scale);
+            int textDx   = (int)(46 * scale);
+
+            int w = 0;
+            foreach (var (psi, amount) in cost)
+            {
+                if (psi == GOLD)
+                {
+                    string g = $"{amount:n0}g";
+                    int gw = (int)System.Math.Ceiling(Game1.smallFont.MeasureString(g).X);
+                    w += gw + pad;
+                }
+                else
+                {
+                    string txt = $"x{amount}";
+                    int tw = (int)System.Math.Ceiling(Game1.smallFont.MeasureString(txt).X);
+                    w += iconSize + textDx + tw + pad;
+                }
+            }
+            return w;
         }
 
         // Кнопка
@@ -473,21 +532,30 @@ namespace DroneWarehouseMod.UI
             IClickableMenu.drawTextureBox(b, tex, src, r.X, r.Y, r.Width, r.Height, tint, 1f, false);
 
             int textOffsetX = 0;
+            const int margin = 12;
 
             if (icon != null && iconSize > 0)
             {
-                int iconX = string.IsNullOrEmpty(text) ? r.X + (r.Width - iconSize) / 2 : r.X + 10;
+                int iconX = string.IsNullOrEmpty(text) ? r.X + (r.Width - iconSize) / 2 : r.X + margin;
                 var dst = new Rectangle(iconX, r.Y + (r.Height - iconSize) / 2, iconSize, iconSize);
                 b.Draw(icon, dst, Color.White * (disabled ? 0.6f : 1f));
-                if (!string.IsNullOrEmpty(text)) textOffsetX = iconSize + 14;
+                if (!string.IsNullOrEmpty(text)) textOffsetX = iconSize + margin + 2;
             }
 
             if (!string.IsNullOrEmpty(text))
             {
-                var size = Game1.smallFont.MeasureString(text);
-                var pos = new Vector2(r.X + (r.Width - size.X) / 2f + textOffsetX / 2f, r.Y + (r.Height - size.Y) / 2f);
+                var raw = Game1.smallFont.MeasureString(text);
+                float avail = r.Width - textOffsetX - margin * 2;
+                float scale = MathF.Min(1f, MathF.Max(0.65f, avail / MathF.Max(1f, raw.X))); // 0.65 — нижний порог читаемости
+
+                float x = r.X + textOffsetX + (avail - raw.X * scale) / 2f + margin;
+                float y = r.Y + (r.Height - raw.Y * scale) / 2f;
+
                 var color = disabled ? Color.Lerp(new Color(120, 255, 170), Color.Black, 0.4f) : new Color(120, 255, 170);
-                Utility.drawTextWithShadow(b, text, Game1.smallFont, pos, color);
+
+                // лёгкая тень
+                b.DrawString(Game1.smallFont, text, new Vector2(x + 2, y + 2), Color.Black * 0.35f, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+                b.DrawString(Game1.smallFont, text, new Vector2(x, y), color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
             }
         }
 
@@ -528,7 +596,7 @@ namespace DroneWarehouseMod.UI
                 {
                     if (who.Items[i] is SObject o && !o.bigCraftable.Value && o.ParentSheetIndex == id)
                     {
-                        int take = Math.Min(o.Stack, need);
+                        int take = System.Math.Min(o.Stack, need);
                         o.Stack -= take;
                         need -= take;
                         if (o.Stack <= 0) who.Items[i] = null;
@@ -553,7 +621,7 @@ namespace DroneWarehouseMod.UI
                     string g = $"{amount:n0}g";
                     var color = (Game1.player.Money >= amount) ? new Color(120, 255, 170) : Color.Red;
                     Utility.drawTextWithShadow(b, g, Game1.smallFont, new Vector2(x, y + textDy), color);
-                    int w = (int)Math.Ceiling(Game1.smallFont.MeasureString(g).X);
+                    int w = (int)System.Math.Ceiling(Game1.smallFont.MeasureString(g).X);
                     x += w + pad;
                     continue;
                 }
@@ -567,7 +635,7 @@ namespace DroneWarehouseMod.UI
 
                 Utility.drawTextWithShadow(b, txt, Game1.smallFont, new Vector2(x + textDx, y + textDy), color2);
 
-                int textW = (int)Math.Ceiling(Game1.smallFont.MeasureString(txt).X);
+                int textW = (int)System.Math.Ceiling(Game1.smallFont.MeasureString(txt).X);
                 x += iconSize + textDx + textW + pad;
             }
         }
