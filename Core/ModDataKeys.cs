@@ -32,5 +32,6 @@ namespace DroneWarehouseMod.Core
         public const string PlantEpoch    = "DroneWH/PlantEpoch";
         public const string RegrowXpSig   = "DroneWH/RegrowXpSig";
         public const string RegrowXpGiven = "DroneWH/RegrowXpGiven";
+        public const string CeProxy = Prefix + "CEProxy"; // хранит guid склада
     }
 }

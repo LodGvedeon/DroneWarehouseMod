@@ -83,6 +83,9 @@ namespace DroneWarehouseMod.Game
 
         private const int MAX_FARMERS = 3;
 
+        private readonly Dictionary<string, Vector2> _caProxyTiles = new(); // guid → тайл
+        private static readonly Vector2 CA_PROXY_BASE = new(-9000, -9000);
+
         // Сетка no‑fly
         private readonly HashSet<Point> _noFly = new();
         private static int NOFLY_PAD_TILES = 1;
@@ -101,10 +104,15 @@ namespace DroneWarehouseMod.Game
             {
                 RecallAllDronesHome(farm);
                 CleanupRegrowFlags(farm); // <— НОВОЕ
+
+                foreach (var b in farm.buildings)
+                if (b?.buildingType?.Value == "DroneWarehouse")
+                    EnsureChestAnywhereProxy(farm, b);
             }
 
             foreach (var d in _drones)
                 if (d is WaterDrone w) w.RefillToMax();
+            
 
             _petDoneToday.Clear();
             _bushDoneToday.Clear();
@@ -635,6 +643,148 @@ namespace DroneWarehouseMod.Game
                 || Intersects(a, b, c1, c2) || Intersects(a, b, d1, d2);
         }
 
+        private static void TrySetNetBool(object obj, string memberName, bool value)
+        {
+            try
+            {
+                var t = obj?.GetType();
+                if (t == null) return;
+                var p = t.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object net = p != null ? p.GetValue(obj) : t.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj);
+                net?.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(net, value);
+            }
+            catch { /* тихо для 1.5 */ }
+        }
+        private static void TrySetNetString(object obj, string memberName, string value)
+        {
+            try
+            {
+                var t = obj?.GetType();
+                if (t == null) return;
+                var p = t.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object net = p != null ? p.GetValue(obj) : t.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj);
+                net?.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(net, value);
+            }
+            catch { /* тихо для 1.5 */ }
+        }
+
+        private static void SetChestDisplayName(Chest chest, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+
+            // 1) ванильное 1.6+ поле (NetString)
+            TrySetNetString(chest, "playerChestName", name);
+
+            // 2) базовое имя объекта (SObject.name) — на всякий случай
+            try { chest.Name = name; } catch { /* тихо */ }
+
+            // 3) ключи, которые понимает Chests Anywhere для пользовательского имени
+            try
+            {
+                chest.modData["Pathoschild.ChestsAnywhere/Name"] = name;
+                chest.modData["Pathoschild.ChestsAnywhere/CustomName"] = "1";
+            }
+            catch { /* тихо */ }
+        }
+
+        private static void TrySetNetEnum(object obj, string memberName, string enumName)
+        {
+            try
+            {
+                var t = obj?.GetType();
+                if (t == null) return;
+
+                // 1) редкий случай: член — прямое enum‑свойство
+                var propDirect = t.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (propDirect != null && propDirect.PropertyType.IsEnum)
+                {
+                    var val = Enum.Parse(propDirect.PropertyType, enumName, ignoreCase: true);
+                    propDirect.SetValue(obj, val);
+                    return;
+                }
+
+                // 2) обычный случай: NetEnum<T> поле/свойство — ставим .Value
+                object net = propDirect != null
+                    ? propDirect.GetValue(obj)
+                    : t.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj);
+
+                var valProp = net?.GetType().GetProperty("Value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (valProp != null)
+                {
+                    var enumType = valProp.PropertyType;
+                    var val = Enum.Parse(enumType, enumName, ignoreCase: true);
+                    valProp.SetValue(net, val);
+                }
+            }
+            catch { /* тихо для 1.5 */ }
+        }
+
+        private Vector2 AllocateProxyTile(Farm farm)
+        {
+            Vector2 t = CA_PROXY_BASE;
+            while (farm.objects.ContainsKey(t))
+                t.X -= 1;
+            return t;
+        }
+
+        internal void EnsureChestAnywhereProxy(Farm farm, Building b)
+        {
+            // создаём только если установлен Chest Anywhere
+            if (!_helper.ModRegistry.IsLoaded("Pathoschild.ChestsAnywhere"))
+                return;
+
+            string id = EnsureGuid(b);
+            Chest chest = GetChestFor(b);
+
+            if (!_caProxyTiles.TryGetValue(id, out var tile))
+            {
+                tile = AllocateProxyTile(farm);
+                _caProxyTiles[id] = tile;
+            }
+
+            // очистим возможный старый объект в том же месте
+            farm.objects.Remove(tile);
+
+            chest.TileLocation = tile;
+            chest.playerChest.Value = true;
+            TrySetNetBool(chest, "fridge",   false);
+            TrySetNetBool(chest, "movable",  false);
+            TrySetNetString(chest, "playerChestName", _helper.Translation.Get("menu.chest.title").ToString());
+
+            string nice = _helper.Translation.Get("menu.chest.title").ToString();
+            if (string.IsNullOrWhiteSpace(nice)) nice = "Склад дронов — Сундук";
+            SetChestDisplayName(chest, nice);
+
+            // пометим чей это прокси, чтобы безопасно удалять
+            chest.modData[MD.CeProxy] = id; // ключ уже был в проекте; если его убрали — верните в ModDataKeys
+
+            // важное: это ТОТ ЖЕ экземпляр Chest, который открывается меню
+            farm.objects[tile] = chest;
+        }
+
+        internal void RemoveChestAnywhereProxy(Farm farm, Building b)
+        {
+            string id = EnsureGuid(b);
+            if (_caProxyTiles.TryGetValue(id, out var tile))
+            {
+                if (farm.objects.TryGetValue(tile, out var obj) && obj is Chest c &&
+                    c.modData.TryGetValue(MD.CeProxy, out var wid) && wid == id)
+                    farm.objects.Remove(tile);
+                _caProxyTiles.Remove(id);
+            }
+        }
+
+        internal void RemoveAllChestAnywhereProxies(Farm farm)
+        {
+            foreach (var (wid, tile) in _caProxyTiles.ToList())
+            {
+                if (farm.objects.TryGetValue(tile, out var obj) && obj is Chest c &&
+                    c.modData.TryGetValue(MD.CeProxy, out var id) && id == wid)
+                    farm.objects.Remove(tile);
+            }
+            _caProxyTiles.Clear();
+        }
+
         public bool IsNearHatch(Building b, Vector2 pos, float radiusMul = 1f)
         {
             float r = Math.Max(1f, NEAR_HATCH_RADIUS * radiusMul);
@@ -779,6 +929,8 @@ namespace DroneWarehouseMod.Game
             if (removed > 0)
                 PersistFarmerJobs(farm);
         }
+        public string PickFirstSeasonSeed(Building b, GameLocation loc)
+            => PickFirstSeasonSeedFromChest(GetChestFor(b), loc);
 
         public bool TryStartFarmerFromBeacons(Building b, Farm farm, out string reason)
         {
@@ -788,8 +940,7 @@ namespace DroneWarehouseMod.Game
             var tiles = BuildTilesFromBeaconsSimple(virt);
             if (tiles.Count == 0) { reason = I18n.Get("farmer.reason.noTiles"); return false; }
 
-            var chest = GetChestFor(b);
-            int totalSeeds = CountSeasonSeeds(chest, farm);
+            int totalSeeds = CountSeasonSeeds(GetChestFor(b), farm);
             if (totalSeeds < tiles.Count)
             {
                 reason = I18n.Get("farmer.reason.notEnoughSeeds", new { need = tiles.Count, have = totalSeeds });
@@ -994,6 +1145,9 @@ namespace DroneWarehouseMod.Game
 
             b.modData.Remove(MD.FarmerJob);
             b.modData.Remove(MD.HasFarmer);
+
+            RemoveChestAnywhereProxy(farm, b);
+
         }
 
         private readonly int _scanInterval;
@@ -1018,6 +1172,7 @@ namespace DroneWarehouseMod.Game
             LOS_PAD_PX = Math.Max(0, _cfg.LineOfSightPadPx);
             
             _helper.Events.GameLoop.Saving += OnSaving;
+            _helper.Events.GameLoop.Saved  += OnSaved;
 
             static DroneAnimSet EnsureNotEmpty(DroneAnimSet set, Texture2D fb)
             {
@@ -1151,7 +1306,7 @@ namespace DroneWarehouseMod.Game
                 }
             }
         }
-                
+
         private void OnSaving(object? sender, SavingEventArgs e)
         {
             try
@@ -1171,11 +1326,22 @@ namespace DroneWarehouseMod.Game
 
                 // 2) На всякий случай сериализуем все сундуки складов в modData (глобальный снимок).
                 PersistChests(farm);
+
+                RemoveAllChestAnywhereProxies(farm);
             }
             catch (Exception ex)
             {
                 _mon.Log($"[Saving] unload/persist failed: {ex}", LogLevel.Trace);
             }
+        }
+        
+        private void OnSaved(object? sender, SavedEventArgs e)
+        {
+            try
+            {
+                if (Game1.getFarm() is not Farm farm) return;
+            }
+            catch { }
         }
 
         public void PersistFarmerJobs(Farm farm)
@@ -1289,6 +1455,27 @@ namespace DroneWarehouseMod.Game
             if (!_chests.TryGetValue(id, out var chest))
             {
                 chest = new Chest(true) { playerChest = { Value = true } };
+
+                try
+                {
+                    // 1.6+: реально переключаем тип сундука на BigChest (70 слотов)
+                    TrySetNetEnum(chest, "specialChestType", "BigChest");
+
+                    // подстраховка: довести список до 70, чтобы не было null‑range ошибок
+                    if (chest.Items != null)
+                        while (chest.Items.Count < 70)
+                            chest.Items.Add(null);
+
+                    string nice = _helper.Translation.Get("menu.chest.title").ToString();
+                    if (string.IsNullOrWhiteSpace(nice)) nice = "Склад дронов — Сундук";
+                    SetChestDisplayName(chest, nice);
+
+                    // на 1.6 запретим переносить (чисто косметика для удалённых контейнеров)
+                    TrySetNetBool(chest, "movable", false);
+                    TrySetNetBool(chest, "fridge",  false);
+                }
+                catch { /* тихо */ }
+
                 _chests[id] = chest;
 
                 if (b.modData.TryGetValue(MD.Chest, out var data) && !string.IsNullOrEmpty(data))
@@ -1381,6 +1568,7 @@ namespace DroneWarehouseMod.Game
 
                 EnsureGuid(b);
                 GetChestFor(b);
+                EnsureChestAnywhereProxy(farm, b);
 
                 int wantH = ParseInt(b.modData.TryGetValue(MD.CountHarvest, out var sH) ? sH : "0");
                 int wantW = ParseInt(b.modData.TryGetValue(MD.CountWater,  out var sW) ? sW : "0");
@@ -1828,21 +2016,22 @@ namespace DroneWarehouseMod.Game
 
         internal void DepositToChest(CargoDroneBase d, List<Item> cargo)
         {
-            Chest chest = GetChestFor(d.Home);
+            if (cargo == null || cargo.Count == 0) return;
+
+            // 1) базовый сундук склада
+            Chest baseChest = GetChestFor(d.Home);
             for (int i = 0; i < cargo.Count; i++)
             {
                 var item = cargo[i];
-                if (item is null) continue; // защита от null в списке
+                if (item is null) continue;
 
-                Item? leftover = chest.addItem(item);
-                if (leftover is SObject lo && lo.Stack > 0)
-                    cargo[i] = lo;
-                else
-                    cargo[i] = null!;
+                Item? left = baseChest.addItem(item);
+                cargo[i] = (left is SObject lo && lo.Stack > 0) ? lo : null!;
             }
+            SaveChestToModData(d.Home, baseChest);
             cargo.RemoveAll(it => it is null);
-            SaveChestToModData(d.Home, chest);
-        }
+        }   
+
 
         public void ForceUnloadAllCargoForTests()
         {
